@@ -1,21 +1,10 @@
 /venv/
-/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl
 /*.pkl
 /*.xml
+/*.pt
+/*.pth
+/*.npy
+/*.wav
+/*.zip
+/*.flac
 
-
-/data/laptops/Laptops_Test_Gold.xml
-/data/laptops/Laptops_Test_Gold_Implicit_Labeled.xml
-/data/laptops/Laptops_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl
-/data/laptops/Laptops_Train_v2.xml
-/data/laptops/Laptops_Train_v2_Implicit_Labeled.xml
-/data/laptops/Laptops_Train_v2_Implicit_Labeled_preprocess_finetune.pkl
-/data/preprocessed/laptops_base_google-flan-t5-base.pkl
-/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl
-/data/preprocessed/old_restaurants_base_google-flan-t5-base.pkl
-/data/restaurants/Restaurants_Test_Gold.xml
-/data/restaurants/Restaurants_Test_Gold_Implicit_Labeled.xml
-/data/restaurants/Restaurants_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl
-/data/restaurants/Restaurants_Train_v2.xml
-/data/restaurants/Restaurants_Train_v2_Implicit_Labeled.xml
-/data/restaurants/Restaurants_Train_v2_Implicit_Labeled_preprocess_finetune.pkl
