@@ -7,6 +7,9 @@
 *.wav
 *.zip
 *.flac
+*.txt
+*.png
+*.csv
 
 .idea/
 .DS_Store
