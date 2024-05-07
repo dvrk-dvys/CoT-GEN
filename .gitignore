@@ -10,6 +10,9 @@
 *.txt
 *.png
 *.csv
+*.zip
+*.parquet
+*.csv
 
 .idea/
 .DS_Store

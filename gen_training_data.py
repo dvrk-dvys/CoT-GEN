@@ -115,7 +115,10 @@ from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, p
 
 class genDataset:
     def __init__(self, args):
-        config = AttrDict(yaml.load(open(args.config, 'r', encoding='utf-8'), Loader=yaml.FullLoader))
+        cwd = os.getcwd()
+
+
+        config = AttrDict(yaml.load(open(os.getcwd() + args.config, 'r', encoding='utf-8'), Loader=yaml.FullLoader))
         for k, v in vars(args).items():
             setattr(config, k, v)
         self.config = config
@@ -294,10 +297,13 @@ class genDataset:
 
 
 if __name__ == '__main__':
+    raw_file_path = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
+
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='./config/genconfig.yaml', help='config file')
-    parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/raw/raw_dev.csv')
-    parser.add_argument('-of', '--output_format', default='json', choices=['xml', 'json'])
+    # parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/raw/raw_dev.csv')
+    parser.add_argument('-i', '--raw_file_path', default=raw_file_path)
+    parser.add_argument('-of', '--output_format', default='json', choices=['xml', 'json', 'pkl'])
     args = parser.parse_args()
     # config = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/config/genconfig.yaml'
     # df = pd.read_csv('/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/raw/TTCommentExporter-7352614724489547051-127-comments.csv')

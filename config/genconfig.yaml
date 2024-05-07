@@ -1,5 +1,5 @@
 data_dir: 'data'
-target_dir: 'data/newgen'
+target_dir: 'data/gen'
 t5_model_path: 'google/flan-t5-base'
 bert_model_path: 'bert-base-uncased'
 model_size: 'base'
