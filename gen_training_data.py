@@ -15,7 +15,7 @@ import pandas as pd
 
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import Row
-from pyspark.sql.functions import explode, col, upper, left, rank
+from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id
 from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType
 
@@ -139,9 +139,6 @@ def json_error_handler(max_retries=3, delay_seconds=4, spec=''):
         return wrapper
     return decorator
 
-
-
-
 class genDataset:
     def __init__(self, args):
         # cwd = os.getcwd()
@@ -160,47 +157,88 @@ class genDataset:
                               .appName("TiktokComments")
                               .getOrCreate())
 
-        self.input_file = args.raw_file_path
-        self.batch_size = 20
+        self.input_file_path = args.raw_file_path
+        self.output_file_path = args.out_file_path
         self.raw_text_col = args.raw_text_col
-        self.base_df, self.raw_input_array = self.intialize_df(self.raw_text_col)
+        self.out_text_col = args.out_text_col
+        self.batch_size = self.config['gen_batch_size']
+        self.output_pkl_path = args.output_pkl_path
+
+        self.processed_ids = []
+        self.remaining_df = None
+
+        self.base_df, self.raw_input_array = self.intialize_df(self.raw_text_col, self.out_text_col)
         self.model = "gpt-4"
-        #self.model="gpt-3.5-turbo",
+        #self.model="gpt-3.5-turbo"
 
 
-    def intialize_df(self, raw_text_column):
+    def intialize_df(self, raw_text_column, out_text_col):
         base_df = (
             self.spark_session.read
-            .csv(f"{self.input_file}", header=True, inferSchema=True)
+            .csv(f"{self.input_file_path}", header=True, inferSchema=True)
             .withColumn("index", monotonically_increasing_id())
-            .limit(self.batch_size)
+            # .limit(self.batch_size)
         )
 
-        base_df.show()  # This will print the first 20 rows in the DataFrame.
+        base_df.show(self.batch_size)  # This will print the first 20 rows in the DataFrame.
 
         # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
         raw_input_array = base_df.select(raw_text_column).rdd.flatMap(lambda x: x).collect()
-        return base_df, raw_input_array
+
+        if os.path.exists(self.output_file_path):
+            self.processed_df = self.spark_session.read.parquet(f"{self.output_file_path}")
+            self.processed_df.show()
+            self.processed_ids = self.processed_df.select(out_text_col).distinct().rdd.flatMap(lambda x: x).collect()
+        else:
+            self.processed_df = self.spark_session.createDataFrame([], schema=base_df.schema)
+
+        self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
+        self.remaining_df.show()
+        print(self.remaining_df.count(), ' Rows remaining')
+
+        # base_df.show()
+        # print(base_df.count())
+
+        return self.remaining_df, raw_input_array
 
         # self.raw_input_array = None
 
-    def prep_token_flatten(self):
+    """
+    The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
+    1: BERT (Bidirectional Encoder Representations from Transformers) is designed to understand the context of words in a sentence by considering the words that come before and after the target word. It's primarily used for tasks like Named Entity Recognition (NER), sentiment analysis, and question answering.
+    2: T5 (Text-to-Text Transfer Transformer) takes a different approach by treating every NLP problem as a text-to-text problem, meaning it converts all NLP tasks into a text-to-text format. This model is versatile and can be used for a variety of tasks, such as translation, summarization, question answering, and more.
+    """
+
+    def extract_text_tokens(self, input_array):
+        # # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
+        # self.raw_input_array = id_text_token_df.select("raw_texts").rdd.flatMap(lambda x: x).collect()
+        # test = self.tokenizer.encode_plus(input_array[0])
+        batch_encoded = self.tokenizer.batch_encode_plus(input_array,
+                                                        # self.raw_input_array,
+                                                         padding=True,
+                                                         max_length=self.config.max_length,
+                                                         return_tensors=None)
+        print(batch_encoded)
+        self.tokens = batch_encoded
+        return self.tokens
+
+    def prep_token_flatten(self, batch_df, raw_batch_array):
         zip_data = [
             (input_ids, token_type_ids, attention_mask, raw_input)
             for input_ids, token_type_ids, attention_mask, raw_input in zip(
                 self.tokens.data['input_ids'],
                 self.tokens.data['token_type_ids'],
                 self.tokens.data['attention_mask'],
-                self.raw_input_array
+                raw_batch_array
             )
         ]
 
         token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', self.raw_text_col])
         token_nest_df.show()
-        self.base_df.show()
-        self.base_df = self.base_df.join(token_nest_df, self.raw_text_col, "left")
-        self.base_df.show()
-
+        batch_df.show()
+        batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left").orderBy('index')
+        batch_df.show()
+        return batch_df
 
     #  PySpark doesn't handle lists of lists automatically without a clear schema.
     def flatten_df(self, df, uuid, uuid_col_name, nests, flat_col_name, type):
@@ -224,29 +262,11 @@ class genDataset:
 
         unioned_df = df.join(nests, uuid_col_name, "left")
         unioned_df.show()
-        flat_df = unioned_df.withColumn(flat_col_name, explode(unioned_df[flat_col_name]))
+        flat_df = unioned_df.withColumn(flat_col_name, explode(unioned_df[flat_col_name])).orderBy('Index')
         flat_df.show()
         flat_list = flat_df.select(flat_col_name).rdd.flatMap(lambda x: x).collect()
         assert flat_df.count() == len(flat_list)
         return flat_list, flat_df
-
-
-    """
-    The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
-    1: BERT (Bidirectional Encoder Representations from Transformers) is designed to understand the context of words in a sentence by considering the words that come before and after the target word. It's primarily used for tasks like Named Entity Recognition (NER), sentiment analysis, and question answering.
-    2: T5 (Text-to-Text Transfer Transformer) takes a different approach by treating every NLP problem as a text-to-text problem, meaning it converts all NLP tasks into a text-to-text format. This model is versatile and can be used for a variety of tasks, such as translation, summarization, question answering, and more.
-    """
-
-    def extract_text_tokens(self, df):
-        # # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
-        # self.raw_input_array = id_text_token_df.select("raw_texts").rdd.flatMap(lambda x: x).collect()
-        batch_encoded = self.tokenizer.batch_encode_plus(self.raw_input_array,
-                                                         padding=True,
-                                                         max_length=self.config.max_length,
-                                                         return_tensors=None)
-        print(batch_encoded)
-        self.tokens = batch_encoded
-        return self.tokens
 
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Base GPT Prompt')
     def prompt_gpt(self, role, prompt):
@@ -279,14 +299,12 @@ class genDataset:
             print()
         return mask
 
-    def batch_generate_aspect_masks(self):
+    def batch_generate_aspect_masks(self, input_ids, index):
         self.aspect_masks = []
         for i, a in enumerate(self.aspects):
             encoded_aspect_token = self.tokenizer.encode(a, add_special_tokens=False)
-            try:
-                self.aspect_masks.append(self.generate_aspect_mask(self.tokens.data['input_ids'][self.index[i]], encoded_aspect_token))
-            except:
-                print()
+            local_index = index[i] % self.batch_size
+            self.aspect_masks.append(self.generate_aspect_mask(self.tokens.data['input_ids'][local_index], encoded_aspect_token))
         return self.aspect_masks
 
     def extract_aspects(self, sentence):
@@ -301,8 +319,8 @@ class genDataset:
         return self.aspects
 
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Aspects')
-    def batch_extract_aspects(self):
-        new_context = f'Given these sentences "{self.raw_input_array}", '
+    def batch_extract_aspects(self, batch_input_array):
+        new_context = f'Given these sentences "{batch_input_array}", '
         prompt = new_context + f'which words or phrases are the aspect terms?'
         role = (
             "You are a system that identifies the core word(s) or phrase(s) in a list of sentences, which represent the aspect or target term(s). "
@@ -328,8 +346,9 @@ class genDataset:
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
         return self.polarity_implicitness
 
-    def batch_extract_polarity_implicitness(self, aspects):
-        new_context = f'Given these sentences "{self.raw_input_array}" and aspect term pairs,"{aspects}"'
+    @json_error_handler(max_retries=3, delay_seconds=2, spec='Polarity & Implicits')
+    def batch_extract_polarity_implicitness(self, batch_input_array, aspects):
+        new_context = f'Given these sentences "{batch_input_array}" and aspect term pairs"{aspects}" which are of length {len(aspects)}, '
         prompt = new_context + f'determine the polairty (positive, negative or neutral) of aspect term and if it is explicitely or implicitely expressed with respect to the whole sentence?'
         role = (
             "You are operating as a system that, given a list of sentence & aspect term pairs, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence."
@@ -337,9 +356,11 @@ class genDataset:
             "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'."
             "Each entry represents an input sentence-aspect pair, indexed accordingly."
             "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...]"
+            "Be sure to assess every single aspect term and that the length of your output is exactly the same as the length of the given sentence array and aspect array."
             "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters."
             "Ensure the output contains only this JSON array and no additional text.")
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
+        # assert len(self.polarity_implicitness) == len(aspects)
         return self.polarity_implicitness
 
     def transform_df(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask, polarity_implicitness):
@@ -362,71 +383,116 @@ class genDataset:
             for i in range(len(aspect_terms))
         ]
 
-        df = self.spark_session.createDataFrame(rows)
+        final_train_df = self.spark_session.createDataFrame(rows)
 
-        # df.show()
+        print('debug select')
+        final_train_df.show()
+        self.base_df.show()
         # self.id_text_token_df.show()
 
-        final_df = df.alias('a').join(self.base_df.alias('b'), col('a.raw_text') == col('b.Comment'), "left") \
+        full_final_df = final_train_df.alias('a').join(self.base_df.alias('b'), col('a.' + self.out_text_col) == col('b.' + self.raw_text_col), "left") \
             .select('b.*',
-                    'a.aspect_mask',
-                    'a.token_ids',
-                    'a.implicitness',
-                    'a.polarity')
+                    'a.*')
         # final_df.show()
-        return final_df
+        return full_final_df
+
+
+    def write_pkl_file(self, result_df, pkl_path):
+        result_df.printSchema()
+        #
+        train_df = result_df.select(col('aspect').alias('raw_aspect_terms'),
+                                    array_join(col('aspect_mask'), ',').alias('aspect_mask'),
+                                    array_join(col('token_ids'), ',').alias('bert_tokens'),
+                                    array_join(col('token_type_ids'), ',').alias('token_type_ids'),
+                                    array_join(col('attention_mask'), ',').alias('attention_mask'),
+                                    expr("CAST(implicitness AS STRING)").alias('implicits'),
+                                    # expr("CAST(polarity AS STRING)").alias('labels'),
+                                    col('polarity').alias('labels'),
+                                    col('raw_text').alias('raw_texts'))
+        train_df.show()
+
+        data = train_df.collect()
+
+        with open(pkl_path, 'wb') as file:
+            pickle.dump(data, file)
 
     def run(self):
-        self.batch_extract_aspects()
-        self.extract_text_tokens(self.base_df)
-        self.prep_token_flatten()
-        # Bootle Neck
-        self.aspects, self.base_df = self.flatten_df(self.base_df, self.raw_input_array, self.raw_text_col, self.aspects, 'aspectTerm', dict)
-        # / Bootle Neck
-        self.extract_text_tokens(self.base_df)
-        self.index = self.base_df.select('index').rdd.flatMap(lambda x: x).collect()
-        self.batch_generate_aspect_masks()
-        self.batch_extract_polarity_implicitness(self.aspects)
-        print()
-        raw_text = self.base_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
-        input_ids = self.base_df.select("input_ids").rdd.flatMap(lambda x: x).collect()
-        token_type_ids = self.base_df.select("token_type_ids").rdd.flatMap(lambda x: x).collect()
-        attention_mask = self.base_df.select("attention_mask").rdd.flatMap(lambda x: x).collect()
+        # remaining_df = self.input_df
+        while self.remaining_df.count() > 0:
+            self.batch_df = self.remaining_df.limit(self.batch_size)
 
-        return self.transform_df(raw_text, input_ids, token_type_ids, attention_mask, self.aspects, self.aspect_masks, self.polarity_implicitness)
+            # ------------------------------------------
+            raw_batch_array = self.batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
+            self.batch_extract_aspects(raw_batch_array)
+            self.extract_text_tokens(raw_batch_array)
+            self.batch_df = self.prep_token_flatten(self.batch_df, raw_batch_array)
 
+            # Bootle Neck
+            # self.aspects, self.base_df = self.flatten_df(self.base_df, self.raw_input_array, self.raw_text_col, self.aspects, 'aspectTerm', dict)
+            self.aspects, self.batch_df = self.flatten_df(self.batch_df, raw_batch_array, self.raw_text_col, self.aspects, 'aspectTerm', dict)
+
+            # / Bootle Neck
+
+            # self.extract_text_tokens(self.base_df)
+
+            self.index = self.batch_df.select('index').rdd.flatMap(lambda x: x).collect()
+            # test = self.base_df.select('index').rdd.flatMap(lambda x: x).collect()
+            raw_text = self.batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
+            input_ids = self.batch_df.select("input_ids").rdd.flatMap(lambda x: x).collect()
+            token_type_ids = self.batch_df.select("token_type_ids").rdd.flatMap(lambda x: x).collect()
+            attention_mask = self.batch_df.select("attention_mask").rdd.flatMap(lambda x: x).collect()
+
+            self.batch_generate_aspect_masks(input_ids, self.index)
+            self.batch_extract_polarity_implicitness(raw_batch_array, self.aspects)
+
+            self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask, self.aspects, self.aspect_masks, self.polarity_implicitness)
+            # ------------------------------------------
+
+            self.processed_batch_df.write.mode('append').parquet(self.output_file_path)
+            self.processed_batch_df.show()
+            self.processed_ids = self.processed_batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
+            self.remaining_df = self.remaining_df.filter(~self.remaining_df[self.raw_text_col].isin(self.processed_ids))
+            self.remaining_df.show()
+            self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
+            print()
 
 if __name__ == '__main__':
     raw_file_path = './data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
+    out_parquet_path = "./data/gen/train_dataframe.parquet"
+    out_pkl_path = './data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='./config/genconfig.yaml', help='config file')
     # parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/raw/raw_dev.csv')
-    parser.add_argument('-i', '--raw_file_path', default=raw_file_path)
-    parser.add_argument('-col', '--raw_text_col', default='Comment')
-    parser.add_argument('-of', '--output_format', default='json', choices=['xml', 'json', 'pkl'])
+    parser.add_argument('-r', '--raw_file_path', default=raw_file_path)
+    parser.add_argument('-r_col', '--raw_text_col', default='Comment')
+    parser.add_argument('-o', '--out_file_path', default=out_parquet_path)
+    parser.add_argument('-o_col', '--out_text_col', default='raw_text')
+
+    parser.add_argument('-of', '--output_format', default='pkl', choices=['xml', 'json', 'pkl'])
+    parser.add_argument('-pkl', '--output_pkl_path', default=out_pkl_path)
+
     args = parser.parse_args()
-    # config = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/config/genconfig.yaml'
     # df = pd.read_csv('/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/raw/TTCommentExporter-7352614724489547051-127-comments.csv')
     gen = genDataset(args=args)
     result_df = gen.run()
     result_df.show()
     result_df.write.parquet("/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/gen/train_dataframe.parquet")
     # result_df.write.csv("/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/gen/train_dataframe.csv")
-    result_df.write.json("/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/gen/train_dataframe.json")
+    # result_df.write.json("/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/gen/train_dataframe.json")
 
-    train_df = result_df.select(col('raw_text').alias('raw_texts'),
-                                col('aspect').alias('raw_aspect_terms'),
-                                col('token_ids').alias('bert_tokens'),
-                                col('aspect_mask').alias('aspect_mask'),
-                                col('implicitness').alias('implicits'),
-                                col('polarity').alias('labels'))
-    train_df.show()
-
-    data = train_df.collect()
-
-    with open('/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl', 'w') as file:
-        pickle.dump(data, file)
+    # train_df = result_df.select(col('raw_text').alias('raw_texts'),
+    #                             col('aspect').alias('raw_aspect_terms'),
+    #                             col('token_ids').alias('bert_tokens'),
+    #                             col('aspect_mask').alias('aspect_mask'),
+    #                             col('implicitness').alias('implicits'),
+    #                             col('polarity').alias('labels'))
+    # train_df.show()
+    #
+    # data = train_df.collect()
+    #
+    # with open('/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl', 'w') as file:
+    #     pickle.dump(data, file)
 
     # remove the token_ids
     # result_df.write.csv(path='/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/gen/Tiktok_Train.csv', mode='overwrite', header=True)
