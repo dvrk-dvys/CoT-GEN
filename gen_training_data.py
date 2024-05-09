@@ -23,17 +23,15 @@ from pyspark.sql.types import StructType, StructField, StringType, ArrayType, In
 from openai import OpenAI
 import json
 from distutils.util import strtobool
-
-
 from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
+
 
 # polarity_key = {0:positive, 1:negative, 2:neutral}
 
-
 # indexs 0, 1, 6, 8 from
-# laptops_test_gold_pkl_file = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/laptops/Laptops_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
+# laptops_test_gold_pkl_file = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/laptops/Laptops_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
 # indexs 0, 2, from
-# laptops_train_gold_pkl_file = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/laptops/Laptops_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
+# laptops_train_gold_pkl_file = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/laptops/Laptops_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
 # data_pkl = {
 #         'raw_texts': ["boot time is super fast, around anywhere from 35 seconds to 1 minute.",
 #                       "tech support would not fix the problem unless i bought your plan for $150 plus.",
@@ -175,8 +173,6 @@ class genDataset:
 
         self.tokenizer = AutoTokenizer.from_pretrained(config.bert_model_path)
 
-        # self.df = pd.read_csv(args.raw_file)
-
         self.spark_session = (SparkSession.builder
                               .master("local[*]")
                               .appName("TiktokComments")
@@ -189,11 +185,11 @@ class genDataset:
             StructField("Username", StringType(), True),
             StructField("Nick Name", StringType(), True),
             StructField("Comment", StringType(), True),
-            StructField("Comment Time", StringType(), True),  # or TimestampType() if you handle datetime objects
+            StructField("Comment Time", StringType(), True),
             StructField("Digg Count", IntegerType(), True),
-            StructField("Author Digged", StringType(), True),  # assuming 'Yes' or 'No' can be converted to True/False
+            StructField("Author Digged", StringType(), True),
             StructField("Reply Count", IntegerType(), True),
-            StructField("Pinned to Top", StringType(), True),  # assuming 'Yes' or 'No' can be converted to True/False
+            StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
         ])
 
@@ -203,7 +199,7 @@ class genDataset:
             StructField("token_ids", ArrayType(IntegerType(), True), True),
             StructField("token_type_ids", ArrayType(IntegerType(), True), True),
             StructField("attention_mask", ArrayType(IntegerType(), True), True),
-            StructField("implicitness", BooleanType(), True),  # based on previous error message
+            StructField("implicitness", BooleanType(), True),
             StructField("polarity", IntegerType(), True),
             StructField("raw_text", StringType(), True)
         ])
@@ -217,9 +213,9 @@ class genDataset:
             StructField("Comment", StringType(), True),
             StructField("Comment Time", StringType(), True),
             StructField("Digg Count", IntegerType(), True),
-            StructField("Author Digged", StringType(), True),  # assuming 'Yes' or 'No' can be converted to True/False
+            StructField("Author Digged", StringType(), True),
             StructField("Reply Count", IntegerType(), True),
-            StructField("Pinned to Top", StringType(), True),  # assuming 'Yes' or 'No' can be converted to True/False
+            StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
             StructField("aspect", StringType(), True),
             StructField("aspect_mask", ArrayType(IntegerType(), True), True),
@@ -255,10 +251,8 @@ class genDataset:
             # .limit(self.batch_size)
         )
         # base_df = base_df.withColumn("Comment Time", col("Comment Time").cast("timestamp"))
-        base_df = base_df.withColumn("Comment Time",
-                                     from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
-
-        base_df.show(self.batch_size)  # This will print the first 20 rows in the DataFrame.
+        base_df = base_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
+        base_df.show(self.batch_size)
 
         # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
         raw_input_array = base_df.select(raw_text_column).rdd.flatMap(lambda x: x).collect()
@@ -274,20 +268,13 @@ class genDataset:
         self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
         self.remaining_df.show()
         print(self.remaining_df.count(), ' Rows remaining')
-
-        # base_df.show()
-        # print(base_df.count())
-
         return self.remaining_df, raw_input_array
-
-        # self.raw_input_array = None
 
     """
     The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
     1: BERT (Bidirectional Encoder Representations from Transformers) is designed to understand the context of words in a sentence by considering the words that come before and after the target word. It's primarily used for tasks like Named Entity Recognition (NER), sentiment analysis, and question answering.
     2: T5 (Text-to-Text Transfer Transformer) takes a different approach by treating every NLP problem as a text-to-text problem, meaning it converts all NLP tasks into a text-to-text format. This model is versatile and can be used for a variety of tasks, such as translation, summarization, question answering, and more.
     """
-
     def extract_text_tokens(self, input_array):
         # # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
         # self.raw_input_array = id_text_token_df.select("raw_texts").rdd.flatMap(lambda x: x).collect()
@@ -566,7 +553,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='./config/genconfig.yaml', help='config file')
-    # parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/raw/raw_dev.csv')
+    # parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/raw/raw_dev.csv')
     parser.add_argument('-r', '--raw_file_path', default=raw_file_path)
     parser.add_argument('-r_col', '--raw_text_col', default='Comment')
     parser.add_argument('-o', '--out_file_path', default=out_parquet_path)
@@ -576,7 +563,6 @@ if __name__ == '__main__':
     parser.add_argument('-pkl', '--output_pkl_path', default=out_pkl_path)
 
     args = parser.parse_args()
-    # df = pd.read_csv('/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/raw/TTCommentExporter-7352614724489547051-127-comments.csv')
     gen = genDataset(args=args)
     gen.run()
     gen.write_pkl_file(out_pkl_path)

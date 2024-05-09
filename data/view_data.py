@@ -22,11 +22,11 @@ def read_datafile(path):
             StructField("Username", StringType(), True),
             StructField("Nick Name", StringType(), True),
             StructField("Comment", StringType(), True),
-            StructField("Comment Time", StringType(), True),  # or TimestampType() if you handle datetime objects
+            StructField("Comment Time", StringType(), True),
             StructField("Digg Count", IntegerType(), True),
-            StructField("Author Digged", StringType(), True),  # assuming 'Yes' or 'No' can be converted to True/False
+            StructField("Author Digged", StringType(), True),
             StructField("Reply Count", IntegerType(), True),
-            StructField("Pinned to Top", StringType(), True),  # assuming 'Yes' or 'No' can be converted to True/False
+            StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
             StructField("index", LongType(), True),
             StructField("aspect", StringType(), True),
@@ -55,16 +55,16 @@ def read_datafile(path):
 
 
 if __name__ == '__main__':
-    laptops_test_gold_pkl_file = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/laptops/Laptops_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
-    laptops_train_gold_pkl_file = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/laptops/Laptops_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
+    laptops_test_gold_pkl_file = '//data/laptops/Laptops_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
+    laptops_train_gold_pkl_file = '//data/laptops/Laptops_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
 
-    preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/preprocessed/laptops_base_google-flan-t5-base.pkl'
-    preprocessed_restauraunts = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/preprocessed/restaurants_base_google-flan-t5-base.pkl'
-    old_preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl'
+    preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/laptops_base_google-flan-t5-base.pkl'
+    preprocessed_restauraunts = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/restaurants_base_google-flan-t5-base.pkl'
+    old_preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl'
 
-    out_parquet_path = "/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/gen/train_dataframe.parquet"
-    old_parquet_path = "/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/gen/train_dataframe_old.parquet"
-    tt_train = '/Users/jordanharris/Code/PycharmProjects/THOR-ISA-M1/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
+    out_parquet_path = "//data/gen/train_dataframe.parquet"
+    old_parquet_path = "//data/gen/train_dataframe_old.parquet"
+    tt_train = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
 
 
     # old_data = read_datafile(old_parquet_path)
