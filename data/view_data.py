@@ -80,8 +80,7 @@ if __name__ == '__main__':
     preprocessed_restauraunts = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/restaurants_base_google-flan-t5-base.pkl'
     old_preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl'
 
-    train_parquet_path = "/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/train_dataframe.parquet"
-    old_parquet_path = "./data/gen/train_dataframe_old.parquet"
+    train_parquet_path = "/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/old_train_dataframe.parquet"
     tt_train = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
 
     gen_csv = "/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/manual_edits/gen_csv/"
