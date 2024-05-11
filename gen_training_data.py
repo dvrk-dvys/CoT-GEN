@@ -4,7 +4,7 @@ import os
 import time
 from functools import wraps
 
-
+import spacy
 import yaml
 from attrdict import AttrDict
 
@@ -172,6 +172,7 @@ class genDataset:
         self.config['openai_token'] = os.getenv("OPENAI_API_KEY")
 
         self.tokenizer = AutoTokenizer.from_pretrained(config.bert_model_path)
+        self.nlp = spacy.load(config.spacy_model_path)
 
         self.spark_session = (SparkSession.builder
                               .master("local[*]")
@@ -270,6 +271,12 @@ class genDataset:
         print(self.remaining_df.count(), ' Rows remaining')
         return self.remaining_df, raw_input_array
 
+    def extract_negations(self, text):
+        print()
+
+    def preprocess_text(self, text):
+        print()
+
     """
     The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
     1: BERT (Bidirectional Encoder Representations from Transformers) is designed to understand the context of words in a sentence by considering the words that come before and after the target word. It's primarily used for tasks like Named Entity Recognition (NER), sentiment analysis, and question answering.
@@ -287,6 +294,7 @@ class genDataset:
         print(batch_encoded)
         self.tokens = batch_encoded
         return self.tokens
+
 
     def prep_token_flatten(self, batch_df, raw_batch_array):
         zip_data = [
@@ -398,6 +406,8 @@ class genDataset:
         prompt = new_context + f'which words or phrases are the aspect terms?'
         role = (
             "You are a system that identifies the core word(s) or phrase(s) in a list of sentences, which represent the aspect or target term(s). "
+            "Be sure to consider all aspects (Tangible or Intangible) that may be or reference a person, place or thing. "
+            "Treat opinions or mental concepts as their own aspect when there are subjective statements or implicit sentiment made about them."
             "These are the words that other words or phrases in the sentence relate to and augment, either implicitly or explicitly."
             "Return the results as a JSON array with proper formatting, where each entry is a JSON object with one key:'aspectTerm'."
             "If a sentence contains more than one aspect term, list them together as the value for 'aspectTerm'. For example, [{'aspectTerm': 'term0'}, {'aspectTerm': ['term0', 'term1', 'term2']}, ...]."
