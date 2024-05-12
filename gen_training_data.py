@@ -273,61 +273,132 @@ class genDataset:
         return self.remaining_df, raw_input_array
 
     def extract_spaCy_features(self, doc):
-        # Initialize dictionary with lists for collecting multiple items
+        # Initialize dictionary to collect multiple items
         artifacts = {
             'tokens': [],
-            # The base form of each word, useful for normalizing text to reduce word form variation and improve matching and retrieval tasks.
-            # 'lemmas': [],
-            # Part-of-speech tags for each word, critical for understanding grammatical structure and roles, aiding in parsing and informing syntactic analysis.
             'POS_tags': [],
-            # Dependency relations between tokens, essential for understanding syntactic structure of sentences, which is pivotal in tasks that require deep comprehension of sentence construction.
             'dependencies': [],
-            # The syntactic head of each token, indicating the token that governs or controls the token in syntax, crucial for parsing tree construction and understanding hierarchical syntax relationships.
-            # 'heads': [],
-            # # Named entities extracted from text, such as names of people, organizations, locations, etc., key for information extraction and knowledge graph construction.
-            # 'entities': [],
-            # # Labels associated with the named entities, indicating the category of each entity (e.g., person, location, organization), useful for classifying and differentiating types of information in text.
-            # 'labels': [],
-            # #  Individual sentences segmented from the text, fundamental for tasks that operate on or analyze data at the sentence level, such as summarization or sentiment analysis.
-            # 'sentences': [],
             'negations': []
-            # 'categories': doc.cats  # Capture categories if available (often empty without training)
         }
 
         # Collect token attributes
         for token in doc:
-            artifacts['tokens'].append(token.text)  # Append each token's text to the list
-            # artifacts['lemmas'].append(token.lemma_)
+            artifacts['tokens'].append(token.text)
             artifacts['POS_tags'].append(token.pos_)
             artifacts['dependencies'].append(token.dep_)
+            # artifacts['lemmas'].append(token.lemma_)
             # artifacts['heads'].append(token.head.text)
-
+            if token.dep_ == 'neg':
+                artifacts['negations'].append(token.head.text)
         # Collect entity information
         # for ent in doc.ents:
         #     artifacts['entities'].append(ent.text)
         #     artifacts['labels'].append(ent.label_)
-        #
-        # # Collect sentences
+        # #
+        # Collect sentences
         # for span in doc.sents:
         #     artifacts['sentences'].append(span.text)
-
-            # Check if the token is a negation modifier
-            if token.dep_ == 'neg':
-                artifacts['negations'].append(token.head.text)
-
         return artifacts
 
     def batch_preprocess_text(self, input_texts):
-        # Initialize the list to hold features of all documents
-        self.spaCy_features = []
+        # Initialize dictionary to hold features of all documents
+        self.spaCy_features = {
+            'tokens': [],
+            'POS_tags': [],
+            'dependencies': [],
+            'negations': []
+        }
 
         # Process documents in batch for efficiency
         for doc in self.nlp.pipe(input_texts):
             features = self.extract_spaCy_features(doc)
-            self.spaCy_features.append(features)
+            self.spaCy_features['tokens'].append(features['tokens'])
+            self.spaCy_features['POS_tags'].append(features['POS_tags'])
+            self.spaCy_features['dependencies'].append(features['dependencies'])
+            self.spaCy_features['negations'].append(features['negations'])
 
         # Optionally print or return the extracted features
+        # print("spaCy features extracted:", self.spaCy_features)
         # return self.spaCy_features
+
+    # def extract_spaCy_features(self, doc):
+    #     # Initialize dictionary with lists for collecting multiple items
+    #     artifacts = [[],[],[],[]]
+    #
+    #     # Collect token attributes
+    #     for token in doc:
+    #         artifacts[0].append(token.text)  # Append each token's text to the list
+    #         # artifacts['lemmas'].append(token.lemma_)
+    #         artifacts[1].append(token.pos_)
+    #         artifacts[2].append(token.dep_)
+    #         # artifacts['heads'].append(token.head.text)
+    #
+    #     # Collect entity information
+    #     # for ent in doc.ents:
+    #     #     artifacts['entities'].append(ent.text)
+    #     #     artifacts['labels'].append(ent.label_)
+    #     #
+    #     # # Collect sentences
+    #     # for span in doc.sents:
+    #     #     artifacts['sentences'].append(span.text)
+    #
+    #         # Check if the token is a negation modifier
+    #         if token.dep_ == 'neg':
+    #             artifacts[3].append(token.head.text)
+    #
+    #     return artifacts
+    #
+    # def batch_preprocess_text(self, input_texts):
+    #     # Initialize the list to hold features of all documents
+    #     # self.spaCy_features = []
+    #
+    #     self.spaCy_features = {
+    #         'tokens': [],
+    #         # The base form of each word, useful for normalizing text to reduce word form variation and improve matching and retrieval tasks.
+    #         # 'lemmas': [],
+    #         # Part-of-speech tags for each word, critical for understanding grammatical structure and roles, aiding in parsing and informing syntactic analysis.
+    #         'POS_tags': [],
+    #         # Dependency relations between tokens, essential for understanding syntactic structure of sentences, which is pivotal in tasks that require deep comprehension of sentence construction.
+    #         'dependencies': [],
+    #         # The syntactic head of each token, indicating the token that governs or controls the token in syntax, crucial for parsing tree construction and understanding hierarchical syntax relationships.
+    #         # 'heads': [],
+    #         # # Named entities extracted from text, such as names of people, organizations, locations, etc., key for information extraction and knowledge graph construction.
+    #         # 'entities': [],
+    #         # # Labels associated with the named entities, indicating the category of each entity (e.g., person, location, organization), useful for classifying and differentiating types of information in text.
+    #         # 'labels': [],
+    #         # #  Individual sentences segmented from the text, fundamental for tasks that operate on or analyze data at the sentence level, such as summarization or sentiment analysis.
+    #         # 'sentences': [],
+    #         'negations': []
+    #         # 'categories': doc.cats  # Capture categories if available (often empty without training)
+    #     }
+    #
+    #     # Process documents in batch for efficiency
+    #     for doc in self.nlp.pipe(input_texts):
+    #         a = self.extract_spaCy_features(doc)
+    #         self.spaCy_features['tokens'].append(a[0])  # Append each token's text to the list
+    #         # artifacts['lemmas'].append(token.lemma_)
+    #         a['POS_tags'].append(a[1])
+    #         a['dependencies'].append(a[2])
+    #         # artifacts['heads'].append(token.head.text)
+    #
+    #         # Collect entity information
+    #         # for ent in doc.ents:
+    #         #     artifacts['entities'].append(ent.text)
+    #         #     artifacts['labels'].append(ent.label_)
+    #         #
+    #         # # Collect sentences
+    #         # for span in doc.sents:
+    #         #     artifacts['sentences'].append(span.text)
+    #
+    #         # Check if the token is a negation modifier
+    #         a['negations'].append(a[3])
+    #
+    #
+    #         # features = self.extract_spaCy_features(doc)
+    #         # self.spaCy_features.append(features)
+    #
+    #     # Optionally print or return the extracted features
+    #     # return self.spaCy_features
 
     """
     The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
@@ -350,16 +421,20 @@ class genDataset:
 
     def prep_token_flatten(self, batch_df, raw_batch_array):
         zip_data = [
-            (input_ids, token_type_ids, attention_mask, raw_input)
-            for input_ids, token_type_ids, attention_mask, raw_input in zip(
+            (input_ids, token_type_ids, attention_mask, spaCy_tokens, POS_tags, dependencies, negations, raw_input)
+            for input_ids, token_type_ids, attention_mask, spaCy_tokens, POS_tags, dependencies, negations, raw_input in zip(
                 self.bert_tokens.data['input_ids'],
                 self.bert_tokens.data['token_type_ids'],
                 self.bert_tokens.data['attention_mask'],
+                self.spaCy_features['tokens'],
+                self.spaCy_features['POS_tags'],
+                self.spaCy_features['dependencies'],
+                self.spaCy_features['negations'],
                 raw_batch_array
             )
         ]
 
-        token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', self.raw_text_col])
+        token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', 'spaCy_tokens', 'POS_tags', 'dependencies', 'negations', self.raw_text_col])
         token_nest_df.show()
         batch_df.show()
         batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left").orderBy('index')
@@ -454,6 +529,7 @@ class genDataset:
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Aspects')
     @rest_after_run(sleep_seconds=4)
     def batch_extract_aspects(self, batch_input_array, batch_spaCy_features):
+
         new_context = f'Given these sentences "{batch_input_array}" and these spaCy NLP features "{batch_spaCy_features}", '
         prompt = new_context + f'which words or phrases are the aspect terms?'
         role = (
@@ -484,8 +560,9 @@ class genDataset:
 
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Polarity & Implicits')
     @rest_after_run(sleep_seconds=4)
-    def batch_extract_polarity_implicitness(self, batch_input_array, aspects, batch_spaCy_features):
+    def batch_extract_polarity_implicitness(self, batch_input_array, batch_spaCy_features, aspects):
         new_context = f'Given these sentences "{batch_input_array}", spaCy NLP features "{batch_spaCy_features} and corresponding aspect terms "{aspects}" with input length: {len(aspects)}, '
+        # new_context = f'Given this list of lists of sentences, spaCy NLP features and corresponding aspect terms "{zipped_data}" of  length: {self.batch_size}, '
         prompt = new_context + f'determine the polarity (positive, negative or neutral) of aspect term and if it is explicitly or implicitly expressed with respect to the whole sentence?'
         role = (
             "You are operating as a system that, given a list of sentence, spaCy NLP features & aspect terms, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence."
@@ -495,7 +572,7 @@ class genDataset:
             "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'."
             "Each entry represents an input sentence-feature-aspect set, indexed accordingly."
             "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...]"
-            "Be sure to assess every single aspect term and that the length of your output is EXACTLY THE SAME as the length as the INPUT length."
+            "Be sure to assess every single aspect term and that the length of your output is EXACTLY THE SAME as the length as the INPUT."
             "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters."
             "Ensure the output contains only this JSON array and no additional text.")
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
@@ -601,9 +678,15 @@ class genDataset:
             input_ids = self.batch_df.select("input_ids").rdd.flatMap(lambda x: x).collect()
             token_type_ids = self.batch_df.select("token_type_ids").rdd.flatMap(lambda x: x).collect()
             attention_mask = self.batch_df.select("attention_mask").rdd.flatMap(lambda x: x).collect()
+            spaCy_tokens = self.batch_df.select("spaCy_tokens").rdd.flatMap(lambda x: x).collect()
+            POS_tags = self.batch_df.select("POS_tags").rdd.flatMap(lambda x: x).collect()
+            dependencies = self.batch_df.select("dependencies").rdd.flatMap(lambda x: x).collect()
+            negations = self.batch_df.select("negations").rdd.flatMap(lambda x: x).collect()
+
 
             self.batch_generate_aspect_masks(input_ids, self.index)
-            self.batch_extract_polarity_implicitness(raw_batch_array, self.spaCy_features, self.aspects)
+            batch_spaCy_features = [spaCy_tokens, POS_tags, dependencies, negations]
+            self.batch_extract_polarity_implicitness(raw_batch_array, batch_spaCy_features, self.aspects)
 
             self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask, self.aspects, self.aspect_masks, self.polarity_implicitness)
             # ------------------------------------------
