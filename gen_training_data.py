@@ -1,11 +1,15 @@
 import argparse
+import math
 import pickle
 import os
 import time
 from functools import wraps
+from collections import Counter, defaultdict
 
 import spacy
 import yaml
+import numpy as np
+from collections import Counter
 from attrdict import AttrDict
 
 import transformers
@@ -18,8 +22,7 @@ from pyspark.sql import Row
 from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id
 from pyspark.sql.functions import unix_timestamp, from_unixtime
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, LongType
-
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, LongType, DoubleType
 from openai import OpenAI
 import json
 from distutils.util import strtobool
@@ -162,6 +165,7 @@ def json_error_handler(max_retries=3, delay_seconds=8, spec=''):
         return wrapper
     return decorator
 
+
 class genDataset:
     def __init__(self, args):
         # cwd = os.getcwd()
@@ -178,6 +182,8 @@ class genDataset:
                               .master("local[*]")
                               .appName("TiktokComments")
                               .getOrCreate())
+        #self.entropy_udf = udf(lambda text: calculate_shannon_entropy(text), DoubleType())
+        #self.entropy_udf = udf(entropy_udf, DoubleType())
 
         self.csv_schema = StructType([
             StructField("Comment ID", StringType(), True),
@@ -238,19 +244,101 @@ class genDataset:
         self.processed_ids = []
         self.remaining_df = None
 
-        self.base_df, self.raw_input_array = self.intialize_df(self.raw_text_col, self.out_text_col)
-        self.model = "gpt-4"
+        self.base_df, self.raw_input_array = self.initialize_df(self.raw_text_col, self.out_text_col)
+        self.model = "gpt-4o"
+        #self.model = "gpt-4"
         #self.model="gpt-3.5-turbo"
+    @staticmethod
+    @udf(returnType=DoubleType())
+    def calc_shannon_entropy(text):
+        tokens = text.split()
+        freq_dist = Counter(tokens)
+        total_tokens = len(tokens)
+        prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+        entropy = -sum(prob * math.log2(prob) for prob in prob_dist.values())
+        return entropy
 
+    def calc_joint_prob_dist(self, corpus):
+        tokens = corpus.lower().split()
+        total_tokens = len(tokens)
+        freq_dist = Counter(tokens)
+        prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+        joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
+        return prob_dist, joint_prob_dist
 
-    def intialize_df(self, raw_text_column, out_text_col):
+    #@staticmethod
+    #@udf(returnType=DoubleType())
+    #def calculate_surprisal(text, trigram_probabilities):
+    #    words = text.split()
+    #    surprisals = []
+
+    #    for i in range(2, len(words)):
+    #        w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+    #        trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+    #        surprisal = -math.log2(trigram_prob)
+    #        surprisals.append(surprisal)
+
+    #    return sum(surprisals) / len(surprisals) if surprisals else 0.0
+    def construct_reply_trees(self, comment_pairs):
+        reply_tree = {}
+        for row in comment_pairs:
+            comment_id = row["Comment ID"]
+            reply_to_id = row["Reply to Which Comment"]
+            if reply_to_id:
+                if reply_to_id not in reply_tree:
+                    reply_tree[reply_to_id] = []
+                reply_tree[reply_to_id].append(comment_id)
+        return reply_tree
+
+    def initialize_df(self, raw_text_column, out_text_col):
+        #entropy_udf = udf(lambda text: calculate_shannon_entropy(text), DoubleType())
         base_df = (
             self.spark_session.read
             .schema(self.csv_schema)
             .csv(f"{self.input_file_path}", header=True, inferSchema=True)
+            .withColumn("shannon_entropy", self.calc_shannon_entropy(col(raw_text_column)))
+            #.withColumn("surprisal", self.calculate_surprisal(col(raw_text_column)))
             .withColumn("index", monotonically_increasing_id())
             # .limit(self.batch_size)
         )
+        #####################
+
+        corpus = base_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
+        self.comment_corpus = " ".join(corpus)
+        self.prob_dist, self.joint_prob_dist = self.calc_joint_prob_dist(self.comment_corpus)
+        base_df.show()
+
+        tree_df = base_df.select(['Comment ID', 'Reply to Which Comment', 'Reply Count']
+                )
+        comment_pairs = [row.asDict() for row in tree_df.collect()]
+        reply_trees = self.construct_reply_trees(comment_pairs)
+        #base_df = self.context_adjust_mi(reply_trees, base_df, self.prob_dist, self.joint_prob_dist)
+
+
+
+        prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.prob_dist)
+        joint_prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.joint_prob_dist)
+
+        @udf(returnType=DoubleType())
+        def mutual_information_udf(text):
+            prob_dist = prob_dist_broadcast.value
+            joint_prob_dist = joint_prob_dist_broadcast.value
+            tokens = text.lower().split()
+            mutual_information_score = 0.0
+            for i in range(len(tokens) - 1):
+                x, y = tokens[i], tokens[i + 1]
+                joint_prob = joint_prob_dist.get((x, y), 1e-10)  # Small probability for unseen bigrams
+                marginal_prob_x = prob_dist.get(x, 1e-10)
+                marginal_prob_y = prob_dist.get(y, 1e-10)
+                mutual_information_score += joint_prob * math.log2(joint_prob / (marginal_prob_x * marginal_prob_y))
+            return mutual_information_score
+
+        base_df = base_df.withColumn("mutual_information_score", mutual_information_udf(col("Comment")))
+        #base_df = self.context_adjust_mi(reply_trees, base_df, self.prob_dist, self.joint_prob_dist)
+
+        #####################
+
         # base_df = base_df.withColumn("Comment Time", col("Comment Time").cast("timestamp"))
         base_df = base_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
         base_df.show(self.batch_size)
@@ -357,7 +445,10 @@ class genDataset:
             ]
         )
         response = completion.choices[0].message.content
-        response = json.loads(response)
+        try:
+            response = json.loads(response)
+        except:
+            print()
         print(response)
         assert isinstance(response, list), f"{self.model} output is read to list"
         assert isinstance(response[0], dict), f"{self.model} output is read to list"
@@ -402,21 +493,26 @@ class genDataset:
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Aspects')
     @rest_after_run(sleep_seconds=4)
     def batch_extract_aspects(self, batch_input_array):
-        new_context = f'Given these sentences "{batch_input_array}", '
+        new_context = f'Given these sentences "{batch_input_array}", then assure that your output length is the exactally the same length of the as the input sentence array "{len(batch_input_array)}"'
         prompt = new_context + f'which words or phrases are the aspect terms?'
         role = (
             "You are a system that identifies the core word(s) or phrase(s) in a list of sentences, which represent the aspect or target term(s). "
-            "Be sure to consider all aspects (Tangible or Intangible) that may be or reference a person, place or thing. "
+            "Be sure to consider all aspects (Tangible or Intangible) that may be or reference a person, place or thing."
             "Treat opinions or mental concepts as their own aspect when there are subjective statements or implicit sentiment made about them."
             "These are the words that other words or phrases in the sentence relate to and augment, either implicitly or explicitly."
-            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with one key:'aspectTerm'."
-            "If a sentence contains more than one aspect term, list them together as the value for 'aspectTerm'. For example, [{'aspectTerm': 'term0'}, {'aspectTerm': ['term0', 'term1', 'term2']}, ...]."
+            "Each entry represents an input sentence-aspect pair, indexed accordingly. Be sure to assess every single input sentence and that the length of your aspect output is exactly the same as the length of the given sentence array."
+            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with one key:'aspectTerm'. In the case where only one aspect term found return that value as a list of length 1 with jsut the one aspect string inside."
+            "If a sentence contains more than one aspect term, list them together as the value for 'aspectTerm'. For example, [{'aspectTerm': ['term0']}, {'aspectTerm': ['term0', 'term1', 'term2']}, ...]."
             "If not significant aspect term is found have the value be 'NONE'. Each aspect object cooresponds to the input sentence, indexed accordingly."
             "Finally check your output for trailing commas, missing or extra brackets, correct quotation marks, and special characters."
             "Ensure the output contains only this JSON array and no additional text."
         )
         self.aspects = self.prompt_gpt(role, prompt)
-        assert len(self.aspects) == len(batch_input_array)
+        try:
+            assert len(self.aspects) == len(batch_input_array)
+        except:
+            print()
+        #assert len(self.aspects) == len(batch_input_array)
         return self.aspects  #, self.aspect_masks
 
     def extract_polarity_implicitness(self, aspects):
@@ -439,14 +535,17 @@ class genDataset:
         role = (
             "You are operating as a system that, given a list of sentence & aspect term pairs, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence."
             "Polarity is either positive (0), negative (1) or neutral (2). Then, determine if the expression is implicit or explicit (True or False)."
-            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'."
+            "Return the results as a JSON array with proper formatting, use double quotes ("") for keys and values. Each entry is a JSON object with two keys:'polarity' and 'implicitness'."
             "Each entry represents an input sentence-aspect pair, indexed accordingly."
             "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...]"
             "Be sure to assess every single aspect term and that the length of your output is exactly the same as the length of the given sentence array and aspect array."
             "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters."
             "Ensure the output contains only this JSON array and no additional text.")
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
-        assert len(self.polarity_implicitness) == len(aspects)
+        try:
+            assert len(self.polarity_implicitness) == len(aspects)
+        except:
+            print()
         return self.polarity_implicitness
 
     def transform_df(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask, polarity_implicitness):
@@ -553,7 +652,7 @@ class genDataset:
             self.processed_ids = self.processed_batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             self.remaining_df = self.remaining_df.filter(~self.remaining_df[self.raw_text_col].isin(self.processed_ids))
             self.remaining_df.show()
-        # self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
+        self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
         print('Run Complete.')
 
 if __name__ == '__main__':
