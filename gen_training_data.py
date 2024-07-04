@@ -244,6 +244,9 @@ class genDataset:
         self.processed_ids = []
         self.remaining_df = None
 
+        self.trigram_probabilities = {}
+
+
         self.base_df, self.raw_input_array = self.initialize_df(self.raw_text_col, self.out_text_col)
         self.model = "gpt-4o"
         #self.model = "gpt-4"
@@ -267,19 +270,6 @@ class genDataset:
         joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
         return prob_dist, joint_prob_dist
 
-    #@staticmethod
-    #@udf(returnType=DoubleType())
-    #def calculate_surprisal(text, trigram_probabilities):
-    #    words = text.split()
-    #    surprisals = []
-
-    #    for i in range(2, len(words)):
-    #        w1, w2, w3 = words[i - 2], words[i - 1], words[i]
-    #        trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
-    #        surprisal = -math.log2(trigram_prob)
-    #        surprisals.append(surprisal)
-
-    #    return sum(surprisals) / len(surprisals) if surprisals else 0.0
     def construct_reply_trees(self, comment_pairs):
         reply_tree = {}
         for row in comment_pairs:
@@ -291,14 +281,71 @@ class genDataset:
                 reply_tree[reply_to_id].append(comment_id)
         return reply_tree
 
-    def calculate_tree_prob_dist(self, tree_comments):
-        tokens = " ".join(tree_comments).lower().split()
+
+
+    def calc_trigram_probabilities(self, corpus):
+        tokens = corpus.lower().split()
         total_tokens = len(tokens)
-        freq_dist = Counter(tokens)
-        prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+
+        # Count trigrams and bigrams
+        trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
         bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
-        joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
-        return prob_dist, joint_prob_dist
+
+        # Calculate trigram probabilities
+        self.trigram_probabilities = {
+            (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
+            for (w1, w2, w3), count in trigram_freq_dist.items()
+        }
+
+    def calc_contextual_trigram_probabilities(self, corpus):
+        tokens = corpus.lower().split()
+        total_tokens = len(tokens)
+
+        # Count trigrams and bigrams
+        trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
+        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+
+        # Calculate trigram probabilities
+        trigram_probabilities = {
+            (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
+            for (w1, w2, w3), count in trigram_freq_dist.items()
+        }
+        return trigram_probabilities
+
+    def contextual_surprisal(self, text, trigram_probabilities):
+        words = text.lower().split()
+        surprisals = []
+
+        for i in range(2, len(words)):
+            w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+            trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+            surprisal = -math.log2(trigram_prob)
+            surprisals.append(surprisal)
+
+        return sum(surprisals) / len(surprisals) if surprisals else 0.0
+
+    def contextual_perplexity(self, text, trigram_probabilities):
+        words = text.lower().split()
+        N = len(words)
+        log_prob_sum = 0.0
+
+        for i in range(2, len(words)):
+            w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+            trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+            log_prob_sum += math.log2(trigram_prob)
+
+        avg_log_prob = log_prob_sum / (N - 2) if N > 2 else 0
+        perplexity = 2 ** (-avg_log_prob)
+        return perplexity
+
+   #def calculate_tree_prob_dist(self, tree_comments):
+   #     tokens = " ".join(tree_comments).lower().split()
+   #     total_tokens = len(tokens)
+   #     freq_dist = Counter(tokens)
+   #     prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+   #     bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+   #     joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
+   #     return prob_dist, joint_prob_dist
 
     def contextual_MI_Score(self, text, prob_dist, joint_prob_dist):
         tokens = text.lower().split()
@@ -311,7 +358,7 @@ class genDataset:
             mutual_information_score += joint_prob * math.log2(joint_prob / (marginal_prob_x * marginal_prob_y))
         return mutual_information_score
 
-    def construct_contextual_MI(self, df):
+    def construct_contextual_scores(self, df):
         comment_pairs = [row.asDict() for row in df.collect()]
         reply_trees = self.construct_reply_trees(comment_pairs)
         scores = []
@@ -323,12 +370,16 @@ class genDataset:
             comment_corpus = " ".join([row["Comment"] for row in branch])
 
             prob_dist, joint_prob_dist = self.calc_joint_prob_dist(comment_corpus)
+            contextual_trigram_probabilities = self.calc_contextual_trigram_probabilities(comment_corpus)
+
             for comment_row in branch:
                 comment = comment_row["Comment"]
                 mi_score = self.contextual_MI_Score(comment, prob_dist, joint_prob_dist)
-                scores.append((comment_row["Comment ID"], mi_score))
+                surprisal_score = self.contextual_surprisal(comment, contextual_trigram_probabilities)
+                perplexity_score = self.contextual_perplexity(comment, contextual_trigram_probabilities)
+                scores.append((comment_row["Comment ID"], float(mi_score), float(surprisal_score), float(perplexity_score)))
 
-        scores_df = self.spark_session.createDataFrame(scores, ["Comment ID", "contextual_mutual_information_score"])
+        scores_df = self.spark_session.createDataFrame(scores, ["Comment ID", "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity"])
         df = df.join(scores_df, on="Comment ID", how="left")
         return df
 
@@ -340,12 +391,17 @@ class genDataset:
             .withColumn("shannon_entropy", self.calc_shannon_entropy(col(raw_text_column)))
             #.withColumn("surprisal", self.calculate_surprisal(col(raw_text_column)))
             .withColumn("index", monotonically_increasing_id())
+            .withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
+            .orderBy(col("Comment Time"))
             # .limit(self.batch_size)
         )
+        base_df.show()
+
         #####################
 
         corpus = base_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
         self.comment_corpus = " ".join(corpus)
+        self.calc_trigram_probabilities(self.comment_corpus)
         self.prob_dist, self.joint_prob_dist = self.calc_joint_prob_dist(self.comment_corpus)
 
         prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.prob_dist)
@@ -366,8 +422,47 @@ class genDataset:
             return mutual_information_score
 
         base_df = base_df.withColumn("mutual_information_score", mutual_information_udf(col("Comment")))
-        base_df = self.construct_contextual_MI(base_df)
+
+        trigram_probabilities_broadcast = self.spark_session.sparkContext.broadcast(self.trigram_probabilities)
+
+        @udf(returnType=DoubleType())
+        def surprisal_udf(text):
+            trigram_probabilities = trigram_probabilities_broadcast.value
+            words = text.lower().split()
+            surprisals = []
+
+            for i in range(2, len(words)):
+                w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+                trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+                surprisal = -math.log2(trigram_prob)
+                surprisals.append(surprisal)
+
+            return sum(surprisals) / len(surprisals) if surprisals else 0.0
+
+
+        base_df = base_df.withColumn("surprisal", surprisal_udf(col("Comment")))
+        @udf(returnType=DoubleType())
+        def perplexity_udf(text):
+            trigram_probabilities = trigram_probabilities_broadcast.value
+            words = text.lower().split()
+            N = len(words)
+            log_prob_sum = 0.0
+
+            for i in range(2, len(words)):
+                w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+                trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+                log_prob_sum += math.log2(trigram_prob)
+
+            avg_log_prob = log_prob_sum / (N - 2) if N > 2 else 0
+            perplexity = 2 ** (-avg_log_prob)
+            return perplexity
+
+        base_df = base_df.withColumn("perplexity", perplexity_udf(col("Comment")))
+
+        base_df = self.construct_contextual_scores(base_df)
         base_df.show()
+
+
 
         # base_df = base_df.withColumn("Comment Time", col("Comment Time").cast("timestamp"))
         base_df = base_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
