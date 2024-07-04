@@ -291,8 +291,48 @@ class genDataset:
                 reply_tree[reply_to_id].append(comment_id)
         return reply_tree
 
+    def calculate_tree_prob_dist(self, tree_comments):
+        tokens = " ".join(tree_comments).lower().split()
+        total_tokens = len(tokens)
+        freq_dist = Counter(tokens)
+        prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+        joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
+        return prob_dist, joint_prob_dist
+
+    def contextual_MI_Score(self, text, prob_dist, joint_prob_dist):
+        tokens = text.lower().split()
+        mutual_information_score = 0.0
+        for i in range(len(tokens) - 1):
+            x, y = tokens[i], tokens[i + 1]
+            joint_prob = joint_prob_dist.get((x, y), 1e-10)  # Small probability for unseen bigrams
+            marginal_prob_x = prob_dist.get(x, 1e-10)
+            marginal_prob_y = prob_dist.get(y, 1e-10)
+            mutual_information_score += joint_prob * math.log2(joint_prob / (marginal_prob_x * marginal_prob_y))
+        return mutual_information_score
+
+    def construct_contextual_MI(self, df):
+        comment_pairs = [row.asDict() for row in df.collect()]
+        reply_trees = self.construct_reply_trees(comment_pairs)
+        scores = []
+
+        for root_comment, comment_ids in reply_trees.items():
+            comment_ids = [root_comment] + comment_ids
+
+            branch = df.filter(df["Comment ID"].isin(comment_ids)).select("Comment ID", "Comment").collect()
+            comment_corpus = " ".join([row["Comment"] for row in branch])
+
+            prob_dist, joint_prob_dist = self.calc_joint_prob_dist(comment_corpus)
+            for comment_row in branch:
+                comment = comment_row["Comment"]
+                mi_score = self.contextual_MI_Score(comment, prob_dist, joint_prob_dist)
+                scores.append((comment_row["Comment ID"], mi_score))
+
+        scores_df = self.spark_session.createDataFrame(scores, ["Comment ID", "contextual_mutual_information_score"])
+        df = df.join(scores_df, on="Comment ID", how="left")
+        return df
+
     def initialize_df(self, raw_text_column, out_text_col):
-        #entropy_udf = udf(lambda text: calculate_shannon_entropy(text), DoubleType())
         base_df = (
             self.spark_session.read
             .schema(self.csv_schema)
@@ -307,15 +347,6 @@ class genDataset:
         corpus = base_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
         self.comment_corpus = " ".join(corpus)
         self.prob_dist, self.joint_prob_dist = self.calc_joint_prob_dist(self.comment_corpus)
-        base_df.show()
-
-        tree_df = base_df.select(['Comment ID', 'Reply to Which Comment', 'Reply Count']
-                )
-        comment_pairs = [row.asDict() for row in tree_df.collect()]
-        reply_trees = self.construct_reply_trees(comment_pairs)
-        #base_df = self.context_adjust_mi(reply_trees, base_df, self.prob_dist, self.joint_prob_dist)
-
-
 
         prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.prob_dist)
         joint_prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.joint_prob_dist)
@@ -335,9 +366,8 @@ class genDataset:
             return mutual_information_score
 
         base_df = base_df.withColumn("mutual_information_score", mutual_information_udf(col("Comment")))
-        #base_df = self.context_adjust_mi(reply_trees, base_df, self.prob_dist, self.joint_prob_dist)
-
-        #####################
+        base_df = self.construct_contextual_MI(base_df)
+        base_df.show()
 
         # base_df = base_df.withColumn("Comment Time", col("Comment Time").cast("timestamp"))
         base_df = base_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
@@ -673,5 +703,5 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     gen = genDataset(args=args)
-    gen.run()
-    gen.write_pkl_file(out_pkl_path)
+    #gen.run()
+    #gen.write_pkl_file(out_pkl_path)
