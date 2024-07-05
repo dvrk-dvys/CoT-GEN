@@ -1,7 +1,8 @@
 import pickle
 from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, ArrayType, LongType, TimestampType, BinaryType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, ArrayType, LongType, DoubleType, TimestampType, BinaryType
 
 
 # # polarity_key = {0:positive, 1:negative, 2:neutral}
@@ -32,14 +33,22 @@ def read_datafile(path, csv_path, csv=True):
             StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
             StructField("index", LongType(), True),
-            StructField("aspect", StringType(), True),
             StructField("aspect_mask", ArrayType(IntegerType(), True), True),
             StructField("token_ids", ArrayType(IntegerType(), True), True),
             StructField("token_type_ids", ArrayType(IntegerType(), True), True),
             StructField("attention_mask", ArrayType(IntegerType(), True), True),
+            StructField("raw_text", StringType(), True),
+            StructField("aspect", StringType(), True),
             StructField("implicitness", BooleanType(), True),  # based on previous error message
             StructField("polarity", IntegerType(), True),
-            StructField("raw_text", StringType(), True)
+            StructField("shannon_entropy", DoubleType(), True),
+            StructField("mutual_information_score", DoubleType(), True),
+            StructField("surprisal", DoubleType(), True),
+            StructField("perplexity", DoubleType(), True),
+            StructField("contextual_mutual_information_score", DoubleType(), True),
+            StructField("contextual_surprisal", DoubleType(), True),
+            StructField("contextual_perplexity", DoubleType(), True),
+
         ])
 
         parquet_df = (spark.read
@@ -52,6 +61,7 @@ def read_datafile(path, csv_path, csv=True):
         df_len = parquet_df.count()
         half_len = int(df_len / 2)
         print('The df length is: ', df_len)
+        parquet_df.show(n=20, truncate=False)
 
         # parquet_df = (
         #     spark.read
@@ -62,7 +72,16 @@ def read_datafile(path, csv_path, csv=True):
         # parquet_rows = parquet_df.collect()
         # parquet_array = [list(p) for p in parquet_rows]
         # print(parquet_array)
-        grooming = parquet_df.select("Comment ID", "index", "raw_text", "aspect", "polarity", "implicitness")
+        grooming = parquet_df.select("Comment ID", "index", "raw_text", "aspect", "implicitness", "polarity", "shannon_entropy", "mutual_information_score", "surprisal", "perplexity", "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity")
+        grooming = grooming.orderBy(
+            col("perplexity").desc(),
+            col("surprisal").desc(),
+            col("mutual_information_score").desc(),
+            col("contextual_perplexity").desc(),
+            col("contextual_surprisal").desc(),
+            col("contextual_mutual_information_score").desc()
+        )
+
         grooming.show(half_len, truncate=False)
         # single partition df
         if csv:
@@ -80,7 +99,7 @@ if __name__ == '__main__':
     preprocessed_restauraunts = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/restaurants_base_google-flan-t5-base.pkl'
     old_preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl'
 
-    train_parquet_path = "/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/train_dataframe.parquet"
+    train_parquet_path = "/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/gen/train_dataframe.parquet"
     old_parquet_path = "./data/gen/train_dataframe_old.parquet"
     tt_train = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
 

@@ -777,8 +777,11 @@ class genDataset:
             self.processed_ids = self.processed_batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             self.remaining_df = self.remaining_df.filter(~self.remaining_df[self.raw_text_col].isin(self.processed_ids))
             self.remaining_df.show()
-        self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
-        print('Run Complete.')
+        try:
+            self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
+            print('Run Complete.')
+        except:
+            print('All data already processed. Terminating.')
 
 if __name__ == '__main__':
     raw_file_path = './data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
@@ -798,5 +801,5 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     gen = genDataset(args=args)
-    #gen.run()
+    gen.run()
     #gen.write_pkl_file(out_pkl_path)
