@@ -3,6 +3,8 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, ArrayType, LongType, DoubleType, TimestampType, BinaryType
+import stanza
+
 
 
 # # polarity_key = {0:positive, 1:negative, 2:neutral}
@@ -80,6 +82,12 @@ def read_datafile(path, csv_path, csv=True):
             col("contextual_perplexity").desc(),
             col("contextual_surprisal").desc(),
             col("contextual_mutual_information_score").desc()
+            #col("perplexity").asc(),
+            #col("surprisal").asc(),
+            #col("mutual_information_score").asc(),
+            #col("contextual_perplexity").asc(),
+            #col("contextual_surprisal").asc(),
+            #col("contextual_mutual_information_score").asc()
         )
 
         grooming.show(half_len, truncate=False)

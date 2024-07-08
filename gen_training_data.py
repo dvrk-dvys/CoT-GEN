@@ -27,7 +27,11 @@ from openai import OpenAI
 import json
 from distutils.util import strtobool
 from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
+import stanza
 
+stanza.download('en')
+
+#doc = nlp("Barack Obama was born in Hawaii.") # run annotation over a sentence
 
 # polarity_key = {0:positive, 1:negative, 2:neutral}
 
@@ -488,6 +492,8 @@ class genDataset:
         print()
 
     def preprocess_text(self, text):
+        nlp = stanza.Pipeline('en')
+        doc = nlp("Barack Obama was born in Hawaii.")  # run annotation over a sentence
         print()
 
     """
