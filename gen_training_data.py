@@ -1,10 +1,14 @@
 import argparse
+import math
 import pickle
 import os
 import time
 from functools import wraps
+from collections import Counter, defaultdict
 
 import yaml
+import numpy as np
+from collections import Counter
 from attrdict import AttrDict
 
 import transformers
@@ -19,13 +23,16 @@ from pyspark.sql import Row
 from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id
 from pyspark.sql.functions import unix_timestamp, from_unixtime
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, LongType
-
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, LongType, DoubleType
 from openai import OpenAI
 import json
 from distutils.util import strtobool
 from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
+import stanza
 
+stanza.download('en')
+
+#doc = nlp("Barack Obama was born in Hawaii.") # run annotation over a sentence
 
 # polarity_key = {0:positive, 1:negative, 2:neutral}
 
@@ -163,6 +170,7 @@ def json_error_handler(max_retries=3, delay_seconds=8, spec=''):
         return wrapper
     return decorator
 
+
 class genDataset:
     def __init__(self, args):
         # cwd = os.getcwd()
@@ -179,6 +187,8 @@ class genDataset:
                               .master("local[*]")
                               .appName("TiktokComments")
                               .getOrCreate())
+        #self.entropy_udf = udf(lambda text: calculate_shannon_entropy(text), DoubleType())
+        #self.entropy_udf = udf(entropy_udf, DoubleType())
 
         self.csv_schema = StructType([
             StructField("Comment ID", StringType(), True),
@@ -239,19 +249,226 @@ class genDataset:
         self.processed_ids = []
         self.remaining_df = None
 
-        self.base_df, self.raw_input_array = self.intialize_df(self.raw_text_col, self.out_text_col)
-        self.model = "gpt-4"
+        self.trigram_probabilities = {}
+
+
+        self.base_df, self.raw_input_array = self.initialize_df(self.raw_text_col, self.out_text_col)
+        self.model = "gpt-4o"
+        #self.model = "gpt-4"
         #self.model="gpt-3.5-turbo"
+    @staticmethod
+    @udf(returnType=DoubleType())
+    def calc_shannon_entropy(text):
+        tokens = text.split()
+        freq_dist = Counter(tokens)
+        total_tokens = len(tokens)
+        prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+        entropy = -sum(prob * math.log2(prob) for prob in prob_dist.values())
+        return entropy
+
+    def calc_joint_prob_dist(self, corpus):
+        tokens = corpus.lower().split()
+        total_tokens = len(tokens)
+        freq_dist = Counter(tokens)
+        prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+        joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
+        return prob_dist, joint_prob_dist
+
+    def construct_reply_trees(self, comment_pairs):
+        reply_tree = {}
+        for row in comment_pairs:
+            comment_id = row["Comment ID"]
+            reply_to_id = row["Reply to Which Comment"]
+            if reply_to_id:
+                if reply_to_id not in reply_tree:
+                    reply_tree[reply_to_id] = []
+                reply_tree[reply_to_id].append(comment_id)
+        return reply_tree
 
 
-    def intialize_df(self, raw_text_column, out_text_col):
+
+    def calc_trigram_probabilities(self, corpus):
+        tokens = corpus.lower().split()
+        total_tokens = len(tokens)
+
+        # Count trigrams and bigrams
+        trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
+        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+
+        # Calculate trigram probabilities
+        self.trigram_probabilities = {
+            (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
+            for (w1, w2, w3), count in trigram_freq_dist.items()
+        }
+
+    def calc_contextual_trigram_probabilities(self, corpus):
+        tokens = corpus.lower().split()
+        total_tokens = len(tokens)
+
+        # Count trigrams and bigrams
+        trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
+        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+
+        # Calculate trigram probabilities
+        trigram_probabilities = {
+            (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
+            for (w1, w2, w3), count in trigram_freq_dist.items()
+        }
+        return trigram_probabilities
+
+    def contextual_surprisal(self, text, trigram_probabilities):
+        words = text.lower().split()
+        surprisals = []
+
+        for i in range(2, len(words)):
+            w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+            trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+            surprisal = -math.log2(trigram_prob)
+            surprisals.append(surprisal)
+
+        return sum(surprisals) / len(surprisals) if surprisals else 0.0
+
+    def contextual_perplexity(self, text, trigram_probabilities):
+        words = text.lower().split()
+        N = len(words)
+        log_prob_sum = 0.0
+
+        for i in range(2, len(words)):
+            w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+            trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+            log_prob_sum += math.log2(trigram_prob)
+
+        avg_log_prob = log_prob_sum / (N - 2) if N > 2 else 0
+        perplexity = 2 ** (-avg_log_prob)
+        return perplexity
+
+   #def calculate_tree_prob_dist(self, tree_comments):
+   #     tokens = " ".join(tree_comments).lower().split()
+   #     total_tokens = len(tokens)
+   #     freq_dist = Counter(tokens)
+   #     prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+   #     bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+   #     joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
+   #     return prob_dist, joint_prob_dist
+
+    def contextual_MI_Score(self, text, prob_dist, joint_prob_dist):
+        tokens = text.lower().split()
+        mutual_information_score = 0.0
+        for i in range(len(tokens) - 1):
+            x, y = tokens[i], tokens[i + 1]
+            joint_prob = joint_prob_dist.get((x, y), 1e-10)  # Small probability for unseen bigrams
+            marginal_prob_x = prob_dist.get(x, 1e-10)
+            marginal_prob_y = prob_dist.get(y, 1e-10)
+            mutual_information_score += joint_prob * math.log2(joint_prob / (marginal_prob_x * marginal_prob_y))
+        return mutual_information_score
+
+    def construct_contextual_scores(self, df):
+        comment_pairs = [row.asDict() for row in df.collect()]
+        reply_trees = self.construct_reply_trees(comment_pairs)
+        scores = []
+
+        for root_comment, comment_ids in reply_trees.items():
+            comment_ids = [root_comment] + comment_ids
+
+            branch = df.filter(df["Comment ID"].isin(comment_ids)).select("Comment ID", "Comment").collect()
+            comment_corpus = " ".join([row["Comment"] for row in branch])
+
+            prob_dist, joint_prob_dist = self.calc_joint_prob_dist(comment_corpus)
+            contextual_trigram_probabilities = self.calc_contextual_trigram_probabilities(comment_corpus)
+
+            for comment_row in branch:
+                comment = comment_row["Comment"]
+                mi_score = self.contextual_MI_Score(comment, prob_dist, joint_prob_dist)
+                surprisal_score = self.contextual_surprisal(comment, contextual_trigram_probabilities)
+                perplexity_score = self.contextual_perplexity(comment, contextual_trigram_probabilities)
+                scores.append((comment_row["Comment ID"], float(mi_score), float(surprisal_score), float(perplexity_score)))
+
+        scores_df = self.spark_session.createDataFrame(scores, ["Comment ID", "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity"])
+        df = df.join(scores_df, on="Comment ID", how="left")
+        return df
+
+    def initialize_df(self, raw_text_column, out_text_col):
         base_df = (
             self.spark_session.read
             .schema(self.csv_schema)
             .csv(f"{self.input_file_path}", header=True, inferSchema=True)
+            .withColumn("shannon_entropy", self.calc_shannon_entropy(col(raw_text_column)))
+            #.withColumn("surprisal", self.calculate_surprisal(col(raw_text_column)))
             .withColumn("index", monotonically_increasing_id())
+            .withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
+            .orderBy(col("Comment Time"))
             # .limit(self.batch_size)
         )
+        base_df.show()
+
+        #####################
+
+        corpus = base_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
+        self.comment_corpus = " ".join(corpus)
+        self.calc_trigram_probabilities(self.comment_corpus)
+        self.prob_dist, self.joint_prob_dist = self.calc_joint_prob_dist(self.comment_corpus)
+
+        prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.prob_dist)
+        joint_prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.joint_prob_dist)
+
+        @udf(returnType=DoubleType())
+        def mutual_information_udf(text):
+            prob_dist = prob_dist_broadcast.value
+            joint_prob_dist = joint_prob_dist_broadcast.value
+            tokens = text.lower().split()
+            mutual_information_score = 0.0
+            for i in range(len(tokens) - 1):
+                x, y = tokens[i], tokens[i + 1]
+                joint_prob = joint_prob_dist.get((x, y), 1e-10)  # Small probability for unseen bigrams
+                marginal_prob_x = prob_dist.get(x, 1e-10)
+                marginal_prob_y = prob_dist.get(y, 1e-10)
+                mutual_information_score += joint_prob * math.log2(joint_prob / (marginal_prob_x * marginal_prob_y))
+            return mutual_information_score
+
+        base_df = base_df.withColumn("mutual_information_score", mutual_information_udf(col("Comment")))
+
+        trigram_probabilities_broadcast = self.spark_session.sparkContext.broadcast(self.trigram_probabilities)
+
+        @udf(returnType=DoubleType())
+        def surprisal_udf(text):
+            trigram_probabilities = trigram_probabilities_broadcast.value
+            words = text.lower().split()
+            surprisals = []
+
+            for i in range(2, len(words)):
+                w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+                trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+                surprisal = -math.log2(trigram_prob)
+                surprisals.append(surprisal)
+
+            return sum(surprisals) / len(surprisals) if surprisals else 0.0
+
+
+        base_df = base_df.withColumn("surprisal", surprisal_udf(col("Comment")))
+        @udf(returnType=DoubleType())
+        def perplexity_udf(text):
+            trigram_probabilities = trigram_probabilities_broadcast.value
+            words = text.lower().split()
+            N = len(words)
+            log_prob_sum = 0.0
+
+            for i in range(2, len(words)):
+                w1, w2, w3 = words[i - 2], words[i - 1], words[i]
+                trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
+                log_prob_sum += math.log2(trigram_prob)
+
+            avg_log_prob = log_prob_sum / (N - 2) if N > 2 else 0
+            perplexity = 2 ** (-avg_log_prob)
+            return perplexity
+
+        base_df = base_df.withColumn("perplexity", perplexity_udf(col("Comment")))
+
+        base_df = self.construct_contextual_scores(base_df)
+        base_df.show()
+
+
+
         # base_df = base_df.withColumn("Comment Time", col("Comment Time").cast("timestamp"))
         base_df = base_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
         base_df.show(self.batch_size)
@@ -400,6 +617,14 @@ class genDataset:
     #     # Optionally print or return the extracted features
     #     # return self.spaCy_features
 
+    def extract_negations(self, text):
+        print()
+
+    def preprocess_text(self, text):
+        nlp = stanza.Pipeline('en')
+        doc = nlp("Barack Obama was born in Hawaii.")  # run annotation over a sentence
+        print()
+
     """
     The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
     1: BERT (Bidirectional Encoder Representations from Transformers) is designed to understand the context of words in a sentence by considering the words that come before and after the target word. It's primarily used for tasks like Named Entity Recognition (NER), sentiment analysis, and question answering.
@@ -484,7 +709,10 @@ class genDataset:
             ]
         )
         response = completion.choices[0].message.content
-        response = json.loads(response)
+        try:
+            response = json.loads(response)
+        except:
+            print()
         print(response)
         assert isinstance(response, list), f"{self.model} output is read to list"
         assert isinstance(response[0], dict), f"{self.model} output is read to list"
@@ -528,6 +756,7 @@ class genDataset:
 
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Aspects')
     @rest_after_run(sleep_seconds=4)
+
     def batch_extract_aspects(self, batch_input_array, batch_spaCy_features):
 
         new_context = f'Given these sentences "{batch_input_array}" and these spaCy NLP features "{batch_spaCy_features}", '
@@ -543,7 +772,11 @@ class genDataset:
             "Ensure the output contains only this JSON array and no additional text."
         )
         self.aspects = self.prompt_gpt(role, prompt)
-        assert len(self.aspects) == len(batch_input_array)
+        try:
+            assert len(self.aspects) == len(batch_input_array)
+        except:
+            print()
+        #assert len(self.aspects) == len(batch_input_array)
         return self.aspects  #, self.aspect_masks
 
     def extract_polarity_implicitness(self, aspects):
@@ -576,7 +809,10 @@ class genDataset:
             "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters."
             "Ensure the output contains only this JSON array and no additional text.")
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
-        assert len(self.polarity_implicitness) == len(aspects)
+        try:
+            assert len(self.polarity_implicitness) == len(aspects)
+        except:
+            print()
         return self.polarity_implicitness
 
     def transform_df(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask, polarity_implicitness):
@@ -694,8 +930,11 @@ class genDataset:
             self.processed_ids = self.processed_batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             self.remaining_df = self.remaining_df.filter(~self.remaining_df[self.raw_text_col].isin(self.processed_ids))
             self.remaining_df.show()
-        # self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
-        print('Run Complete.')
+        try:
+            self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
+            print('Run Complete.')
+        except:
+            print('All data already processed. Terminating.')
 
 if __name__ == '__main__':
     raw_file_path = './data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
@@ -716,4 +955,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     gen = genDataset(args=args)
     gen.run()
-    gen.write_pkl_file(out_pkl_path)
+    #gen.write_pkl_file(out_pkl_path)
