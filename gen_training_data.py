@@ -286,8 +286,6 @@ class genDataset:
                 reply_tree[reply_to_id].append(comment_id)
         return reply_tree
 
-
-
     def calc_trigram_probabilities(self, corpus):
         tokens = corpus.lower().split()
         total_tokens = len(tokens)
@@ -538,33 +536,33 @@ class genDataset:
         # print("spaCy features extracted:", self.spaCy_features)
         # return self.spaCy_features
 
-    # def extract_spaCy_features(self, doc):
-    #     # Initialize dictionary with lists for collecting multiple items
-    #     artifacts = [[],[],[],[]]
-    #
+    def extract_spaCy_features(self, doc):
+         # Initialize dictionary with lists for collecting multiple items
+         artifacts = [[],[],[],[]]
+
     #     # Collect token attributes
-    #     for token in doc:
-    #         artifacts[0].append(token.text)  # Append each token's text to the list
-    #         # artifacts['lemmas'].append(token.lemma_)
-    #         artifacts[1].append(token.pos_)
-    #         artifacts[2].append(token.dep_)
-    #         # artifacts['heads'].append(token.head.text)
-    #
-    #     # Collect entity information
-    #     # for ent in doc.ents:
-    #     #     artifacts['entities'].append(ent.text)
-    #     #     artifacts['labels'].append(ent.label_)
-    #     #
-    #     # # Collect sentences
-    #     # for span in doc.sents:
-    #     #     artifacts['sentences'].append(span.text)
-    #
-    #         # Check if the token is a negation modifier
-    #         if token.dep_ == 'neg':
-    #             artifacts[3].append(token.head.text)
-    #
-    #     return artifacts
-    #
+         for token in doc:
+             artifacts[0].append(token.text)  # Append each token's text to the list
+             # artifacts['lemmas'].append(token.lemma_)
+             artifacts[1].append(token.pos_)
+             artifacts[2].append(token.dep_)
+             # artifacts['heads'].append(token.head.text)
+
+         # Collect entity information
+         # for ent in doc.ents:
+         #     artifacts['entities'].append(ent.text)
+         #     artifacts['labels'].append(ent.label_)
+         #
+         # # Collect sentences
+         # for span in doc.sents:
+         #     artifacts['sentences'].append(span.text)
+
+             # Check if the token is a negation modifier
+             if token.dep_ == 'neg':
+                 artifacts[3].append(token.head.text)
+
+         return artifacts
+
     # def batch_preprocess_text(self, input_texts):
     #     # Initialize the list to hold features of all documents
     #     # self.spaCy_features = []
