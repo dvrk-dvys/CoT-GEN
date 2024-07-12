@@ -2,8 +2,8 @@ srilm/
 data/wikiextractor/
 
 /venv/
-*.pkl
-*.xml
+#*.pkl
+#*.xml
 *.pt
 *.pth
 *.npy
