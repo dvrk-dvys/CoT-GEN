@@ -240,6 +240,7 @@ class genDataset:
         ])
 
         self.input_file_path = args.raw_file_path
+        self.stanza_file_path = args.stanza_file_path
         self.output_file_path = args.out_file_path
         self.raw_text_col = args.raw_text_col
         self.out_text_col = args.out_text_col
@@ -290,11 +291,9 @@ class genDataset:
         tokens = corpus.lower().split()
         total_tokens = len(tokens)
 
-        # Count trigrams and bigrams
         trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
         bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
 
-        # Calculate trigram probabilities
         self.trigram_probabilities = {
             (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
             for (w1, w2, w3), count in trigram_freq_dist.items()
@@ -304,11 +303,9 @@ class genDataset:
         tokens = corpus.lower().split()
         total_tokens = len(tokens)
 
-        # Count trigrams and bigrams
         trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
         bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
 
-        # Calculate trigram probabilities
         trigram_probabilities = {
             (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
             for (w1, w2, w3), count in trigram_freq_dist.items()
@@ -399,6 +396,10 @@ class genDataset:
             # .limit(self.batch_size)
         )
         base_df.show()
+        stanza_df = self.spark_session.read.parquet(self.stanza_file_path)
+        joined_df = base_df.join(stanza_df, base_df[raw_text_column] == stanza_df['sentence'], "left_outer")
+        base_df = joined_df.drop(stanza_df['sentence'])
+        base_df.show()
 
         #####################
 
@@ -488,7 +489,6 @@ class genDataset:
         return self.remaining_df, raw_input_array
 
     def extract_spaCy_features(self, doc):
-        # Initialize dictionary to collect multiple items
         artifacts = {
             'tokens': [],
             'POS_tags': [],
@@ -496,7 +496,6 @@ class genDataset:
             'negations': []
         }
 
-        # Collect token attributes
         for token in doc:
             artifacts['tokens'].append(token.text)
             artifacts['POS_tags'].append(token.pos_)
@@ -505,18 +504,15 @@ class genDataset:
             # artifacts['heads'].append(token.head.text)
             if token.dep_ == 'neg':
                 artifacts['negations'].append(token.head.text)
-        # Collect entity information
         # for ent in doc.ents:
         #     artifacts['entities'].append(ent.text)
         #     artifacts['labels'].append(ent.label_)
         # #
-        # Collect sentences
         # for span in doc.sents:
         #     artifacts['sentences'].append(span.text)
         return artifacts
 
     def batch_preprocess_text(self, input_texts):
-        # Initialize dictionary to hold features of all documents
         self.spaCy_features = {
             'tokens': [],
             'POS_tags': [],
@@ -524,7 +520,6 @@ class genDataset:
             'negations': []
         }
 
-        # Process documents in batch for efficiency
         for doc in self.nlp.pipe(input_texts):
             features = self.extract_spaCy_features(doc)
             self.spaCy_features['tokens'].append(features['tokens'])
@@ -532,15 +527,12 @@ class genDataset:
             self.spaCy_features['dependencies'].append(features['dependencies'])
             self.spaCy_features['negations'].append(features['negations'])
 
-        # Optionally print or return the extracted features
         # print("spaCy features extracted:", self.spaCy_features)
         # return self.spaCy_features
 
     def extract_spaCy_features(self, doc):
-         # Initialize dictionary with lists for collecting multiple items
          artifacts = [[],[],[],[]]
 
-    #     # Collect token attributes
          for token in doc:
              artifacts[0].append(token.text)  # Append each token's text to the list
              # artifacts['lemmas'].append(token.lemma_)
@@ -548,23 +540,19 @@ class genDataset:
              artifacts[2].append(token.dep_)
              # artifacts['heads'].append(token.head.text)
 
-         # Collect entity information
          # for ent in doc.ents:
          #     artifacts['entities'].append(ent.text)
          #     artifacts['labels'].append(ent.label_)
          #
-         # # Collect sentences
          # for span in doc.sents:
          #     artifacts['sentences'].append(span.text)
 
-             # Check if the token is a negation modifier
              if token.dep_ == 'neg':
                  artifacts[3].append(token.head.text)
 
          return artifacts
 
     # def batch_preprocess_text(self, input_texts):
-    #     # Initialize the list to hold features of all documents
     #     # self.spaCy_features = []
     #
     #     self.spaCy_features = {
@@ -587,7 +575,6 @@ class genDataset:
     #         # 'categories': doc.cats  # Capture categories if available (often empty without training)
     #     }
     #
-    #     # Process documents in batch for efficiency
     #     for doc in self.nlp.pipe(input_texts):
     #         a = self.extract_spaCy_features(doc)
     #         self.spaCy_features['tokens'].append(a[0])  # Append each token's text to the list
@@ -596,23 +583,18 @@ class genDataset:
     #         a['dependencies'].append(a[2])
     #         # artifacts['heads'].append(token.head.text)
     #
-    #         # Collect entity information
     #         # for ent in doc.ents:
     #         #     artifacts['entities'].append(ent.text)
     #         #     artifacts['labels'].append(ent.label_)
     #         #
-    #         # # Collect sentences
     #         # for span in doc.sents:
     #         #     artifacts['sentences'].append(span.text)
     #
-    #         # Check if the token is a negation modifier
     #         a['negations'].append(a[3])
-    #
     #
     #         # features = self.extract_spaCy_features(doc)
     #         # self.spaCy_features.append(features)
     #
-    #     # Optionally print or return the extracted features
     #     # return self.spaCy_features
 
     def extract_negations(self, text):
@@ -936,13 +918,17 @@ class genDataset:
 
 if __name__ == '__main__':
     raw_file_path = './data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
+    stanza_path = "./data/gen/stanza-7226101187500723498-201.parquet"
     out_parquet_path = "data/gen/train_dataframe.parquet"
     out_pkl_path = './data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
+
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='./config/genconfig.yaml', help='config file')
     # parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/raw/raw_dev.csv')
     parser.add_argument('-r', '--raw_file_path', default=raw_file_path)
+    parser.add_argument('-s', '--stanza_file_path', default=stanza_path)
+
     parser.add_argument('-r_col', '--raw_text_col', default='Comment')
     parser.add_argument('-o', '--out_file_path', default=out_parquet_path)
     parser.add_argument('-o_col', '--out_text_col', default='raw_text')
