@@ -59,7 +59,10 @@ class MyDataLoader:
         return res, self.config
 
     def collate_fn(self, data):
-        input_tokens, input_targets, input_labels, implicits = zip(*data)
+        try:
+            input_tokens, input_targets, input_labels, implicits = zip(*data)
+        except:
+             print('error: int object not iterable')
         if self.config.reasoning == 'prompt':
             new_tokens = []
             for i, line in enumerate(input_tokens):
