@@ -69,7 +69,7 @@ if __name__ == '__main__':
                         help='with one-step prompt or multi-step thor reasoning')
     parser.add_argument('-z', '--zero_shot', action='store_true', default=True,
                         help='running under zero-shot mode or fine-tune mode')
-    parser.add_argument('-d', '--data_name', default='laptops', choices=['restaurants', 'laptops'],
+    parser.add_argument('-d', '--data_name', default='restaurants', choices=['restaurants', 'laptops'],
                         help='semeval data name')
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
     args = parser.parse_args()
