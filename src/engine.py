@@ -43,6 +43,7 @@ class PromptTrainer:
                     os.makedirs(self.config.target_dir)
                 torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
                            save_name)
+                print(save_name)
                 self.model.to(self.config.device)
             elif epoch - best_iter > self.config.patience:
                 print("Not upgrade for {} steps, early stopping...".format(self.config.patience))
