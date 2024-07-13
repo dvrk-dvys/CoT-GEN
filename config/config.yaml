@@ -1,6 +1,7 @@
 data_dir: 'data'
 preprocessed_dir: 'data/preprocessed'
-target_dir: 'data/save'
+#target_dir: 'data/save'
+target_dir: '/content/drive/MyDrive/models'
 model_path: 'google/flan-t5-base'
 model_size: 'base'
 label_list:  ['positive', 'negative', 'neutral']
