@@ -163,6 +163,7 @@ class ThorTrainer:
                     os.makedirs(self.config.target_dir)
                 torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
                            save_name)
+                print('MODEL SAVED:', save_name)
                 self.model.to(self.config.device)
             elif epoch - best_iter > self.config.patience:
                 print("Not upgrade for {} steps, early stopping...".format(self.config.patience))
@@ -306,10 +307,14 @@ class ThorTrainer:
                 self.add_output(data, output)
 
         result = self.report_score(mode=mode)
+        #torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+        #           save_name)
+        #print('MODEL SAVED:', save_name)
         return result
 
     def final_evaluate(self, epoch=0):
         PATH = self.save_name.format(epoch)
+        print(PATH)
         self.model.load_state_dict(torch.load(PATH, map_location=self.config.device)['model'])
         self.model.eval()
         res = self.evaluate_step(self.test_loader, mode='test')
