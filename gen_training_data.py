@@ -31,7 +31,6 @@ from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, p
 import stanza
 
 stanza.download('en')
-
 #doc = nlp("Barack Obama was born in Hawaii.") # run annotation over a sentence
 
 # polarity_key = {0:positive, 1:negative, 2:neutral}
@@ -126,6 +125,7 @@ stanza.download('en')
 # info
 # negation then counter info
 # how to rate information density?
+
 
 def runtime(func):
         @wraps(func)
