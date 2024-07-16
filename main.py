@@ -38,6 +38,9 @@ class Template:
         self.model = LLMBackbone(config=self.config).to(self.config.device)
         self.config = load_params_LLM(self.config, self.model, self.trainLoader)
 
+        if self.config.checkpoint_path:
+            self.load_checkpoint(self.config.checkpoint_path)
+
         print(f"Running on the {self.config.data_name} data.")
         if self.config.reasoning == 'prompt':
             print("Choosing prompt one-step infer mode.")
@@ -61,6 +64,10 @@ class Template:
         df = pd.DataFrame(lines)
         print(df.to_string())
 
+    def load_checkpoint(self, checkpoint_path):
+        checkpoint = torch.load(checkpoint_path)
+        self.model.load_state_dict(checkpoint['model'])
+        print(f"Loaded checkpoint from {checkpoint_path}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -72,6 +79,8 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--data_name', default='restaurants', choices=['restaurants', 'laptops'],
                         help='semeval data name')
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
+    parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
+
     args = parser.parse_args()
     template = Template(args)
     template.forward()
