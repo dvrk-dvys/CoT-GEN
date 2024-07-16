@@ -83,7 +83,7 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--data_name', default='restaurants', choices=['restaurants', 'laptops'],
                         help='semeval data name')
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
-    parser.add_argument('-ckpt', '--checkpoint_path', default='/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/save/base_restaurants_2.pth.tar', help='path to model checkpoint')
+    parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
 
     args = parser.parse_args()
     template = Template(args)
