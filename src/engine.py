@@ -10,20 +10,22 @@ from src.utils import prompt_for_opinion_inferring, prompt_for_polarity_inferrin
 
 
 class PromptTrainer:
-    def __init__(self, model, config, train_loader, valid_loader, test_loader) -> None:
+    def __init__(self, model, config, train_loader, valid_loader, test_loader, start_epoch=0, best_score=0) -> None:
         self.model = model
         self.config = config
         self.train_loader, self.valid_loader, self.test_loader = train_loader, valid_loader, test_loader
         self.save_name = os.path.join(config.target_dir, config.save_name)
         self.final_score = 0
         self.final_res = ''
+        self.start_epoch = start_epoch
+        self.best_score = best_score
 
         self.scores, self.lines = [], []
         self.re_init()
 
     def train(self):
         best_score, best_iter = 0, -1
-        for epoch in tqdm(range(self.config.epoch_size)):
+        for epoch in tqdm(range(self.start_epoch, self.config.epoch_size)):
             self.model.global_epoch = epoch
             self.global_epoch = epoch
             self.train_step()
@@ -134,19 +136,22 @@ class PromptTrainer:
 
 
 class ThorTrainer:
-    def __init__(self, model, config, train_loader, valid_loader, test_loader) -> None:
+    def __init__(self, model, config, train_loader, valid_loader, test_loader, start_epoch=0, best_score=0) -> None:
         self.model = model
         self.config = config
         self.train_loader, self.valid_loader, self.test_loader = train_loader, valid_loader, test_loader
         self.save_name = os.path.join(config.target_dir, config.save_name)
         self.final_score = 0
         self.final_res = ''
+        self.start_epoch = start_epoch
+        self.best_score = best_score
+
         self.scores, self.lines = [], []
         self.re_init()
 
     def train(self):
         best_score, best_iter = 0, -1
-        for epoch in tqdm(range(self.config.epoch_size)):
+        for epoch in tqdm(range(self.start_epoch, self.config.epoch_size)):
             self.model.global_epoch = epoch
             self.global_epoch = epoch
             self.train_step()
