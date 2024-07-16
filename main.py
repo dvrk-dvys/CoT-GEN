@@ -69,7 +69,7 @@ class Template:
     def load_checkpoint(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
         self.model.load_state_dict(checkpoint['model'])
-        self.start_epoch = checkpoint['epoch']
+        self.start_epoch = checkpoint['epoch'] + 1
         self.best_score = checkpoint['best_score']
         print(f"Loaded checkpoint from {checkpoint_path}")
 
