@@ -31,6 +31,8 @@ class Template:
         names = [config.model_size, config.dataname] + names
         config.save_name = '_'.join(list(map(str, names))) + '_{}.pth.tar'
         self.config = config
+        self.start_epoch = 0
+        self.best_score = 0
 
     def forward(self):
         (self.trainLoader, self.validLoader, self.testLoader), self.config = MyDataLoader(self.config).get_data()
@@ -44,10 +46,10 @@ class Template:
         print(f"Running on the {self.config.data_name} data.")
         if self.config.reasoning == 'prompt':
             print("Choosing prompt one-step infer mode.")
-            trainer = PromptTrainer(self.model, self.config, self.trainLoader, self.validLoader, self.testLoader)
+            trainer = PromptTrainer(self.model, self.config, self.trainLoader, self.validLoader, self.testLoader, self.start_epoch, self.best_score)
         elif self.config.reasoning == 'thor':
             print("Choosing thor multi-step infer mode.")
-            trainer = ThorTrainer(self.model, self.config, self.trainLoader, self.validLoader, self.testLoader)
+            trainer = ThorTrainer(self.model, self.config, self.trainLoader, self.validLoader, self.testLoader, self.start_epoch, self.best_score)
         else:
             raise 'Should choose a correct reasoning mode: prompt or thor.'
 
@@ -67,6 +69,8 @@ class Template:
     def load_checkpoint(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
         self.model.load_state_dict(checkpoint['model'])
+        self.start_epoch = checkpoint['epoch']
+        self.best_score = checkpoint['best_score']
         print(f"Loaded checkpoint from {checkpoint_path}")
 
 if __name__ == '__main__':
@@ -79,7 +83,7 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--data_name', default='restaurants', choices=['restaurants', 'laptops'],
                         help='semeval data name')
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
-    parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
+    parser.add_argument('-ckpt', '--checkpoint_path', default='/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/save/base_restaurants_2.pth.tar', help='path to model checkpoint')
 
     args = parser.parse_args()
     template = Template(args)
