@@ -177,7 +177,7 @@ class ThorTrainer:
                 save_name = self.save_name.format(epoch)
                 if not os.path.exists(self.config.target_dir):
                     os.makedirs(self.config.target_dir)
-                torch.save({'epoch': epoch, 'model': self.model.engine.cpu().state_dict(), 'best_score': best_score},
+                torch.save({'epoch': epoch + 1, 'model': self.model.engine.cpu().state_dict(), 'best_score': best_score},
                            save_name)
 
                 print('MODEL SAVED:', save_name, flush=True)
