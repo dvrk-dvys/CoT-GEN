@@ -1,79 +1,84 @@
 import torch
 import yaml
 from attrdict import AttrDict
-from transformers import AutoTokenizer
-from src.model import LLMBackbone  # Adjust the import based on your model's location
+from transformers import AutoTokenizer, T5ForConditionalGeneration
+import os
 
-# Path to your config file
-config_path = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/config/config.yaml'
 
-# Load the configuration from the YAML file
-with open(config_path, 'r', encoding='utf-8') as file:
-    config = AttrDict(yaml.load(file, Loader=yaml.FullLoader))
+class ISA_Infer:
+    def __init__(self, config_path, model_path):
+        self.config = self.load_config(config_path)
+        self.device = self.set_device()
+        self.tokenizer = AutoTokenizer.from_pretrained('google/flan-t5-base')
+        self.model = T5ForConditionalGeneration.from_pretrained('google/flan-t5-base')
+        self.load_model(model_path)
 
-# Check for MPS or CUDA availability and set the device
-if torch.backends.mps.is_available():
-    config.device = torch.device("mps")
-    print("Using MPS device")
-elif torch.cuda.is_available():
-    config.device = torch.device("cuda")
-    print("Using CUDA device")
-else:
-    config.device = torch.device("cpu")
-    print("Using CPU device")
+    def load_config(self, config_path):
+        with open(config_path, 'r', encoding='utf-8') as file:
+            return AttrDict(yaml.load(file, Loader=yaml.FullLoader))
 
-# Initialize the model architecture with the loaded config
-model = LLMBackbone(config=config).to(config.device)
+    def set_device(self):
+        if torch.backends.mps.is_available():
+            device = torch.device("mps")
+            print("Using MPS device")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+            print("Using CUDA device")
+        else:
+            device = torch.device("cpu")
+            print("Using CPU device")
+        self.config.device = device
+        return device
 
-# Path to your saved model
-model_path = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/save/base_restaurants_0.pth.tar'
+    def load_model(self, model_path):
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found at {model_path}")
+        checkpoint = torch.load(model_path, map_location=self.device)
 
-# Load the state dictionary
-checkpoint = torch.load(model_path, map_location=config.device)
+        # Check if checkpoint contains only the state dict or additional metadata
+        if 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        else:
+            state_dict = checkpoint
 
-# Load the state dictionary into the model
-model.load_state_dict(checkpoint['model'])
-model.eval()  # Set the model to evaluation mode
+        # Remove the 'engine.' prefix from the state_dict keys if present
+        new_state_dict = {key.replace('engine.', ''): value for key, value in state_dict.items()}
 
-# Load the tokenizer
-tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+        self.model.load_state_dict(new_state_dict)
+        self.model.to(self.device)
+        self.model.eval()
 
-# Example input data
-input_text = "Boot time is super fast, around anywhere from 35 seconds to 1 minute."
+    def infer(self, input_sentence):
+        input_tokens = self.tokenizer.encode(input_sentence, return_tensors='pt').to(self.device)
+        with torch.no_grad():
+            output = self.model.generate(input_tokens, max_length=50)
+        decoded_output = self.tokenizer.decode(output[0], skip_special_tokens=True)
+        print(f"Model Output: {decoded_output}")
 
-# Tokenize the input data
-inputs = tokenizer(input_text, return_tensors='pt', max_length=config.max_length, padding='max_length', truncation=True)
+        # Extract sentiment and implicitness
+        output_parts = decoded_output.split(', ')
+        sentiment = output_parts[0].split(': ')[1]
+        implicitness = output_parts[1].split(': ')[1]
+        return sentiment, implicitness
 
-# Print tokenized inputs for debugging
-print("Tokenized Inputs:", inputs)
 
-# Move the inputs to the same device as the model
-inputs = {key: value.to(config.device) for key, value in inputs.items()}
+if __name__ == '__main__':
+    # Define paths
+    config_path = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/config/config.yaml'
+    model_path = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/save/base_restaurants_5.pth.tar'
 
-# Create a mapping to match the model's expected keys
-mapped_inputs = {
-    'input_ids': inputs['input_ids'],
-    'input_masks': inputs['attention_mask']  # Mapping 'attention_mask' to 'input_masks'
-}
+    # Print the current working directory
+    print("Current Working Directory:", os.getcwd())
 
-# Run inference
-with torch.no_grad():
-    generated_ids = model.generate(**mapped_inputs)
+    # Create an instance of the inference class
+    inference = ISA_Infer(config_path, model_path)
 
-# Ensure generated_ids are properly extracted as integers
-if isinstance(generated_ids, torch.Tensor):
-    generated_ids = generated_ids.cpu().tolist()  # Convert tensor to list of lists
+    # Define the input sentence
+    input_sentence = "The food was amazing, but the service was terrible."
 
-# Print generated_ids for debugging
-print("Generated IDs:", generated_ids)
+    # Perform inference
+    sentiment, implicitness = inference.infer(input_sentence)
 
-# Ensure that each element in generated_ids is a list of integers
-if isinstance(generated_ids[0], str):
-    generated_ids = [[int(token) for token in sentence.split()] for sentence in generated_ids]
-
-# Print processed generated_ids for debugging
-print("Processed Generated IDs:", generated_ids)
-
-# Decode the generated tokens
-output_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-print("Output Text:", output_text)
+    # Print results
+    print(f"Sentiment: {sentiment}")
+    print(f"Implicitness: {implicitness}")
