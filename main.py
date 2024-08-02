@@ -6,7 +6,7 @@ from attrdict import AttrDict
 import pandas as pd
 
 from src.utils import set_seed, load_params_LLM
-from src.loader import MyDataLoader
+from src.loader import MyDataLoader, NewDataLoader
 from src.model import LLMBackbone
 from src.engine import PromptTrainer, ThorTrainer
 
@@ -32,6 +32,8 @@ class Template:
 
     def forward(self):
         (self.trainLoader, self.validLoader, self.testLoader), self.config = MyDataLoader(self.config).get_data()
+        #(self.trainLoader, self.validLoader, self.testLoader), self.config = NewDataLoader(self.config).get_data()
+
 
         self.model = LLMBackbone(config=self.config).to(self.config.device)
         self.config = load_params_LLM(self.config, self.model, self.trainLoader)
@@ -80,7 +82,7 @@ if __name__ == '__main__':
                         help='with one-step prompt or multi-step thor reasoning')
     parser.add_argument('-z', '--zero_shot', action='store_true', default=False,
                         help='running under zero-shot mode or fine-tune mode')
-    parser.add_argument('-d', '--data_name', default='restaurants', choices=['restaurants', 'laptops'],
+    parser.add_argument('-d', '--data_name', default='debug', choices=['restaurants', 'laptops', 'debug'],
                         help='semeval data name')
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
     parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
