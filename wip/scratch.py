@@ -1,3 +1,23 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 import torch
 from transformers import AutoModel, AutoTokenizer
 from sklearn.decomposition import PCA
@@ -41,3 +61,12 @@ ax.set_ylabel('PCA2')
 ax.set_zlabel('PCA3')
 plt.title('3D PCA of LLM Embeddings')
 plt.show()
+#------------
+
+
+
+
+
+
+#['PERSON', 'GPE', 'iBookG4', 'PERCENT', 'QUANTITY', 'EVENT', 'LANGUAGE', 'PERCENT', 'WORK_OF_ART', 'INTONE']
+

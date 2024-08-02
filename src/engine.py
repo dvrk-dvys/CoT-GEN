@@ -182,8 +182,48 @@ class ThorTrainer:
         save_name = self.save_name.format(epoch)
         self.final_score, self.final_res = score, res
 
+    #--------------------------------------------------------------------------------------------------------
+    def prepare_step_zero(self, **kwargs):
+        inferred_target_ids, inferred_target_masks = [kwargs[w] for w in 'inferred_target_ids, inferred_target_masks'.strip().split(', ')]
+        # Infer Implicit or Explicit Target
+        prompts = [self.model.tokenizer.decode(ids) for ids in inferred_target_ids]
+        prompts = [context.replace('<pad>', '').replace('</s>', '').strip() for context in prompts]
+        print(prompts[0])
+        res = {
+            'input_ids': inferred_target_ids,
+            'input_masks': inferred_target_masks,
+        }
+
+        res = {k: v.to(self.config.device) for k, v in res.items()}
+        return res
+
+    def prepare_step_one(self, **kwargs):
+        #'aspect_ids': batch_input['input_ids'],
+        #'aspect_masks': batch_input['attention_mask'],
+        #'context_A_ids': batch_contexts_A['input_ids'],
+
+        aspect_ids, aspect_masks, context_A_ids = [kwargs[w] for w in 'aspect_ids, aspect_masks, context_A_ids'.strip().split(', ')]
+        #aspect
+        targets = [self.model.tokenizer.decode(ids) for ids in aspect_ids]
+        targets = [context.replace('<pad>', '').replace('</s>', '').strip() for context in targets]
+        print(targets[0])
+        contexts_A = [self.model.tokenizer.decode(ids) for ids in context_A_ids]
+        contexts_A = [context.replace('<pad>', '').replace('</s>', '').strip() for context in contexts_A]
+        print(contexts_A[0])
+
+        res = {
+            'input_ids': aspect_ids,
+            'input_masks': aspect_masks,
+        }
+
+        res = {k: v.to(self.config.device) for k, v in res.items()}
+        return res
+
+    # --------------------------------------------------------------------------------------------------------
+
     def prepare_step_two(self, aspect_exprs, data):
         context_A_ids, target_ids = [data[w] for w in 'context_A_ids, target_ids'.strip().split(', ')]
+        #aspect
         contexts_A = [self.model.tokenizer.decode(ids) for ids in context_A_ids]
         contexts_A = [context.replace('<pad>', '').replace('</s>', '').strip() for context in contexts_A]
         targets = [self.model.tokenizer.decode(ids) for ids in target_ids]
@@ -244,6 +284,9 @@ class ThorTrainer:
 
     def prepare_step_label(self, polarity_exprs, pre_cxt, data):
         output_ids, output_masks = [data[w] for w in 'output_ids, output_masks'.strip().split(', ')]
+        #output_ids are the final overall polarity of the input text from the db
+
+
 
         context_C_ids = pre_cxt['context_C_ids']
         contexts_C = [self.model.tokenizer.decode(ids) for ids in context_C_ids]
@@ -254,6 +297,7 @@ class ThorTrainer:
             prompt = prompt_for_polarity_label(context_C, polarity_expr)
             new_prompts.append(prompt)
 
+        #new_prompts = Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.
         batch_inputs = self.model.tokenizer.batch_encode_plus(new_prompts, padding=True, return_tensors='pt',
                                                               max_length=3)
         batch_inputs = batch_inputs.data
@@ -273,13 +317,31 @@ class ThorTrainer:
 
         losses = []
         for i, data in enumerate(train_data):
-            step_one_inferred_output = self.model.generate(**data)
+            #--------
 
+            step_zero_inferred_data = self.prepare_step_zero(**data)
+            step_zero_inferred_output = self.model.generate(**step_zero_inferred_data)
+
+            step_one_inferred_data = self.prepare_step_one(**data)
+            step_one_inferred_output = self.model.generate(**step_one_inferred_data)
+            #--------
+
+            # Inferred aspect of 'target': color
+            #'target':Battery --the target comes from labelled data
             step_one_inferred_data = self.prepare_step_two(step_one_inferred_output, data)
+
+            # Inferred implicit opinion expression of the aspect of the 'target' (Battery): 'The gray color was a good choice'
             step_two_inferred_output = self.model.generate(**step_one_inferred_data)
 
+            #Context: 'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color.'
+            #target: Battery # Opinion Expression: the gray color was a good choice
             step_two_inferred_data = self.prepare_step_three(step_two_inferred_output, step_one_inferred_data)
+
+            #'The sentiment polarity is positive'
             step_three_inferred_output = self.model.generate(**step_two_inferred_data)
+
+            #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
+
 
             step_label_data = self.prepare_step_label(step_three_inferred_output, step_two_inferred_data, data)
             loss = self.model(**step_label_data)

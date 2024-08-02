@@ -4,6 +4,30 @@ import torch
 import numpy as np
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
+from functools import wraps
+import time
+
+
+def prompt_for_target_inferring(context):
+    new_context = f'Given the sentence "{context}", '
+    instructions = (
+        'Your task is to identify the **target** being discussed in the sentence. '
+        'The target could be explicitly mentioned (e.g., a product, service, feature, person, topic, idea, etc.) '
+        'or it might be implied through context (implicit). '
+        'In cases where the target is implicit, infer the most likely entity type based on the context provided. '
+        'Consider any descriptory words, aspect terms or opinion expressions that may be depending on and pointing to the target.'
+        #'If the text contains only short exclamations, emojis, or other non-informative content, choose "None".'
+    )
+    ner_vocabulary = (
+        'CARDINAL, DATE, EVENT, FAC, GPE, LANGUAGE, LAW, LOC, MONEY, NORP, ORDINAL, ORG, PERCENT, PERSON, '
+        'PRODUCT, QUANTITY, TIME, WORK_OF_ART' #, None'
+    )
+
+    prompt = new_context + instructions + f' Use this Named Entity Recognition Vocabulary: {ner_vocabulary}'
+    #prompt = new_context + f'Your goal is to identify the target in the sentence that being discussed. The target might be explicitely mentioned as a word or phrase in the text or referred to indirectly through implicit speech pointing toward to sentactically unspecified topic.' \
+    #                       f' If the target is not explicitly mentioned in the text select the most appropriate approximation of the Implicit Target entity type using context clues from this Named Entity Recognition Vocabulary:' \
+    #                       f' CARDINAL, DATE, EVENT, FAC, GPE, LANGUAGE, LAW, LOC, MONEY, NORP, ORDINAL, ORG, PERCENT, PERSON, PRODUCT, QUANTITY, TIME, WORK_OF_ART'
+    return new_context, prompt
 
 
 def prompt_direct_inferring(context, target):
@@ -89,3 +113,15 @@ class ScoreManager:
         best_id = np.argmax(self.score)
         res = self.line[best_id]
         return res
+
+def runtime(func):
+    @wraps(func)
+    def runtime_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        print(f'Function {func.__name__} took {total_time:.4f} seconds')
+        return result
+
+    return runtime_wrapper
