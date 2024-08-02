@@ -4,15 +4,14 @@ import torch
 import numpy as np
 import pickle as pkl
 
+import spacy
+from src.stanza_srilm import NLPTextAnalyzer
+
 
 from src.utils import prompt_for_target_inferring, prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
 from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
 import random
-
-from src.stanza_srilm import NLPTextAnalyzer
-#from pyspark.sql import SparkSession
-#from pyspark.shell import sc
 
 
 class MyDataset(Dataset):
@@ -66,7 +65,9 @@ class MyDataLoader:
 
     def collate_fn(self, data):
         try:
-            input_tokens, input_targets, input_labels, implicits = zip(*data)
+            #input_tokens, input_targets, input_labels, implicits = zip(*data)
+            input_tokens, input_targets, input_labels, implicits, upos_ids, head_ids, deprel_ids, ner_ids = zip(*data)
+
         except:
              print('error: int object not iterable')
         if self.config.reasoning == 'prompt':
@@ -144,18 +145,22 @@ class MyDataLoader:
             print("Input IDs shape:",  batch_input['input_ids'].shape)
             print("Attention Mask shape:", batch_input['attention_mask'].shape)
 
-
             res = {
-                'inferred_target_ids': batch_target_input['input_ids'],
+                'inferred_target_ids': batch_target_input['input_ids'],# Full Prompt 4 Target Extraction
                 'inferred_target_masks': batch_target_input['attention_mask'],
-                'aspect_ids': batch_input['input_ids'],
+                'aspect_ids': batch_input['input_ids'],# Full Prompt 4 Aspect of Target Extraction
                 'aspect_masks': batch_input['attention_mask'],
-                'context_A_ids': batch_contexts_A['input_ids'],
-                'target_ids': batch_targets['input_ids'],
-                'output_ids': batch_output['input_ids'],
-                'output_masks': batch_output['attention_mask'],
-                'input_labels': torch.tensor(input_labels),
-                'implicits': torch.tensor(implicits) #0,1
+                'context_A_ids': batch_contexts_A['input_ids'],# encoded prompt context
+                'target_ids': batch_targets['input_ids'], # Aspect Term Ids
+                'target_masks': batch_targets['attention_mask'], # Aspect Term Masks
+                'output_ids': batch_output['input_ids'],# raw sentiment label
+                'output_masks': batch_output['attention_mask'], #
+                'input_labels': torch.tensor(input_labels), #0, 1, 2
+                'implicits': torch.tensor(implicits),  # 0,1
+                #'upos_ids': upos_ids, #0,1
+                #'head_ids': head_ids,  # 0,1
+                #'deprel_ids': deprel_ids,  # 0,1
+                #'ner_ids': ner_ids,  # 0,1
             }
             res = {k: v.to(self.config.device) for k, v in res.items()}
             return res
@@ -167,6 +172,8 @@ class MyDataLoader:
 class Preprocessor:
     def __init__(self, config):
         self.config = config
+        self.NLPanalyzer = NLPTextAnalyzer()
+        self.nlp = spacy.load("en_core_web_sm")
 
     def read_file(self):
         dataname = self.config.dataname
@@ -199,47 +206,43 @@ class Preprocessor:
             res.append([text, target, label, implicit])
         return res
 
+
+    def new_transformer2indices(self, cur_data):
+        comments = cur_data['raw_texts']
+        nlp_data = []
+        nlp_data = self.NLPanalyzer.nlp_processor(comments)
+
+        res = []
+        for i in range(len(comments)):
+            text = comments[i]
+            target = cur_data['raw_aspect_terms'][i]
+            implicit = 0
+            if 'implicits' in cur_data:
+                implicit = cur_data['implicits'][i]
+            label = cur_data['labels'][i]
+            implicit = int(implicit)
+
+            upos = nlp_data[i]['upos_list']
+            heads = nlp_data[i]['head_list']
+            deprel = nlp_data[i]['deprel_list']
+            ner = nlp_data[i]['ner_list']
+
+            doc = self.nlp(text)
+            ner = [(ent.text, ent.label_, ent.start_char, ent.end_char) for ent in doc.ents]
+
+            #res.append([text, target, label, implicit])
+            res.append([text, target, label, implicit, upos, heads, deprel, ner])
+        return res
+
     def forward(self):
         modes = 'train valid test'.split()
         dataset = self.read_file()
         res = []
         for i, mode in enumerate(modes):
-            data = self.transformer2indices(dataset[i])
+            #data = self.transformer2indices(dataset[i])
+            data = self.new_transformer2indices(dataset[i])
             res.append(data)
         return res
-
-
-
-upos_vocab = {
-    'ADJ': 1, 'ADP': 2, 'ADV': 3, 'AUX': 4, 'CCONJ': 5, 'DET': 6,
-    'INTJ': 7, 'NOUN': 8, 'NUM': 9, 'PART': 10, 'PRON': 11,
-    'PROPN': 12, 'PUNCT': 13, 'SCONJ': 14, 'SYM': 15, 'VERB': 16, 'X': 17
-}
-
-deprel_vocab = {
-    'acl': 1, 'acl:relcl': 2, 'advcl': 3, 'advcl:relcl': 4, 'advmod': 5,
-    'advmod:emph': 6, 'advmod:lmod': 7, 'amod': 8, 'appos': 9, 'aux': 10,
-    'aux:pass': 11, 'case': 12, 'cc': 13, 'cc:preconj': 14, 'ccomp': 15,
-    'clf': 16, 'compound': 17, 'compound:lvc': 18, 'compound:prt': 19,
-    'compound:redup': 20, 'compound:svc': 21, 'conj': 22, 'cop': 23,
-    'csubj': 24, 'csubj:outer': 25, 'csubj:pass': 26, 'dep': 27, 'det': 28,
-    'det:numgov': 29, 'det:nummod': 30, 'det:poss': 31, 'discourse': 32,
-    'dislocated': 33, 'expl': 34, 'expl:impers': 35, 'expl:pass': 36,
-    'expl:pv': 37, 'fixed': 38, 'flat': 39, 'flat:foreign': 40, 'flat:name': 41,
-    'goeswith': 42, 'iobj': 43, 'list': 44, 'mark': 45, 'nmod': 46,
-    'nmod:poss': 47, 'nmod:tmod': 48, 'nsubj': 49, 'nsubj:outer': 50,
-    'nsubj:pass': 51, 'nummod': 52, 'nummod:gov': 53, 'obj': 54, 'obl': 55,
-    'obl:agent': 56, 'obl:arg': 57, 'obl:lmod': 58, 'obl:tmod': 59, 'orphan': 60,
-    'parataxis': 61, 'punct': 62, 'reparandum': 63, 'root': 64, 'vocative': 65,
-    'xcomp': 66
-}
-
-ner_vocab = {
-    'CARDINAL': 1, 'DATE': 2, 'EVENT': 3, 'FAC': 4, 'GPE': 5,
-    'LANGUAGE': 6, 'LAW': 7, 'LOC': 8, 'MONEY': 9, 'NORP': 10,
-    'ORDINAL': 11, 'ORG': 12, 'PERCENT': 13, 'PERSON': 14,
-    'PRODUCT': 15, 'QUANTITY': 16, 'TIME': 17, 'WORK_OF_ART': 18
-} # 'NONE': 19
 
 class NewDataLoader:
     def __init__(self, config):

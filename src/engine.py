@@ -6,7 +6,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, f1_score
 from collections import defaultdict
-from src.utils import prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
+from src.utils import prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label, ner_vocab
 
 
 class PromptTrainer:
@@ -183,19 +183,77 @@ class ThorTrainer:
         self.final_score, self.final_res = score, res
 
     #--------------------------------------------------------------------------------------------------------
+    def calc_weighted_loss_dist(self, inference, targets):
+        print(ner_vocab)
+        for t in inference:
+            if t in ner_vocab.keys():
+                print()
+            else:
+                print()
+        return
+
+    def determine_implicitness(self, implicits_list, inferred_implicits, targets):
+        implicitness_bool = []
+        for t in inferred_implicits:
+            if t.upper() != 'NONE':
+                implicitness_bool.append(0)
+            elif t in ner_vocab.keys():
+                print()
+                test = self.calc_weighted_loss_dist(inferred_implicits, targets)
+                implicitness_bool.append(1)
+            else:
+                implicitness_bool.append(0)
+        test = self.calc_weighted_loss_dist(inferred_implicits, targets)
+        return implicitness_bool
+
     def prepare_step_zero(self, **kwargs):
-        inferred_target_ids, inferred_target_masks = [kwargs[w] for w in 'inferred_target_ids, inferred_target_masks'.strip().split(', ')]
+        inferred_target_prompt_ids, inferred_target_prompt_masks, target_ids, target_masks, implicits = [kwargs[w] for w in 'inferred_target_ids, inferred_target_masks, target_ids, target_masks, implicits'.strip().split(', ')]
+        #inferred_target_ids, inferred_target_masks = [kwargs[w] for w in 'inferred_target_ids, inferred_target_masks'.strip().split(', ')]
+
         # Infer Implicit or Explicit Target
-        prompts = [self.model.tokenizer.decode(ids) for ids in inferred_target_ids]
+        prompts = [self.model.tokenizer.decode(ids) for ids in inferred_target_prompt_ids]
         prompts = [context.replace('<pad>', '').replace('</s>', '').strip() for context in prompts]
-        print(prompts[0])
-        res = {
-            'input_ids': inferred_target_ids,
-            'input_masks': inferred_target_masks,
+        print(prompts[0])# Given the sentence "my opinion of sony has been dropping as fast as the stock market, given their horrible support, but this machine just caused another plunge.", Your task is to identify the **target** being discussed in the sentence. The target could be explicitly mentioned (e.g., a product, service, feature, person, topic, idea, etc.) or it might be implied through context (implicit). In cases where the target is implicit, infer the most likely entity type based on the context provided. Consider any descriptory words, aspect terms or opinion expressions that may be depending on and pointing to the target. Use this Named Entity Recognition Vocabulary: CARDINAL, DATE, EVENT, FAC, GPE, LANGUAGE, LAW, LOC, MONEY, NORP, ORDINAL, ORG, PERCENT, PERSON, PRODUCT, QUANTITY, TIME, WORK_OF_ART
+
+        labeled_targets = [self.model.tokenizer.decode(ids) for ids in target_ids]
+        labeled_targets = [target.replace('<pad>', '').replace('</s>', '').strip() for target in labeled_targets]
+        print(labeled_targets[0])# 'support'
+
+        target_res = {
+            'input_ids': inferred_target_prompt_ids,
+            'input_masks': inferred_target_prompt_masks,
+            'output_ids': target_ids,
+            'output_masks': target_masks,
         }
 
-        res = {k: v.to(self.config.device) for k, v in res.items()}
-        return res
+        implicits_list = implicits.tolist()
+        implicit_labels = list(map(lambda i: str(i), implicits_list))
+        print(implicit_labels[0])
+
+        inferred_implicits = self.model.generate(**target_res)
+
+        test = self.determine_implicitness(implicits_list, inferred_implicits, labeled_targets)
+
+        batch_inferred_implicits = self.model.tokenizer.batch_encode_plus(inferred_implicits, padding=True, return_tensors='pt',
+                                                              max_length=self.config.max_length)
+        batch_inferred_implicits = batch_inferred_implicits.data
+
+        batch_implicit_labels = self.model.tokenizer.batch_encode_plus(implicit_labels, padding=True, return_tensors='pt',
+                                                              max_length=self.config.max_length)
+        batch_implicit_labels = batch_implicit_labels.data
+
+        implicitness_res = {
+            'input_ids': batch_inferred_implicits['input_ids'],
+            'input_masks': batch_inferred_implicits['attention_mask'],
+            'output_ids': batch_implicit_labels['input_ids'],
+            'output_masks': batch_implicit_labels['attention_mask'],
+        }
+
+        target_res = {k: v.to(self.config.device) for k, v in target_res.items()}
+
+
+        #implicitness_res = {k: v.to(self.config.device) for k, v in implicitness_res.items()}
+        return target_res, implicitness_res, inferred_implicits
 
     def prepare_step_one(self, **kwargs):
         #'aspect_ids': batch_input['input_ids'],
@@ -282,11 +340,9 @@ class ThorTrainer:
         res = {k: v.to(self.config.device) for k, v in res.items()}
         return res
 
-    def prepare_step_label(self, polarity_exprs, pre_cxt, data):
+    def prepare_sentiment_label(self, polarity_exprs, pre_cxt, data):
         output_ids, output_masks = [data[w] for w in 'output_ids, output_masks'.strip().split(', ')]
         #output_ids are the final overall polarity of the input text from the db
-
-
 
         context_C_ids = pre_cxt['context_C_ids']
         contexts_C = [self.model.tokenizer.decode(ids) for ids in context_C_ids]
@@ -319,11 +375,20 @@ class ThorTrainer:
         for i, data in enumerate(train_data):
             #--------
 
-            step_zero_inferred_data = self.prepare_step_zero(**data)
-            step_zero_inferred_output = self.model.generate(**step_zero_inferred_data)
+            target_label_data, implicitness_label_data, inferred_implicits = self.prepare_step_zero(**data)
+            #step_zero_inferred_data = self.prepare_step_zero(**data)
+            #target_label_data = self.prepare_target_label(step_zero_inferred_output, data)
+            target_loss = self.model(**target_label_data)
+            test = self.calc_ner_loss_dist(inferred_implicits, data)
+
+            #implicitness_label_data = self.prepare_implicitness_label(step_zero_inferred_output, data)
+            implicitness_loss = self.model(**implicitness_label_data)
+
 
             step_one_inferred_data = self.prepare_step_one(**data)
             step_one_inferred_output = self.model.generate(**step_one_inferred_data)
+            #loss = self.model(**step_label_data)
+
             #--------
 
             # Inferred aspect of 'target': color
@@ -341,9 +406,8 @@ class ThorTrainer:
             step_three_inferred_output = self.model.generate(**step_two_inferred_data)
 
             #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
-
-
-            step_label_data = self.prepare_step_label(step_three_inferred_output, step_two_inferred_data, data)
+            #step_label_data = self.prepare_step_label(step_three_inferred_output, step_two_inferred_data, data)
+            step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
             loss = self.model(**step_label_data)
             losses.append(loss.item())
             loss.backward()
