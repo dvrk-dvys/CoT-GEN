@@ -8,7 +8,7 @@ import spacy
 from src.stanza_srilm import NLPTextAnalyzer
 
 
-from src.utils import prompt_for_target_inferring, prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
+from src.utils import prompt_for_target_inferring, prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring, prompt_for_implicitness_inferring
 from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
 import random
@@ -101,12 +101,22 @@ class MyDataLoader:
 
         elif self.config.reasoning == 'thor':
             #--------
-            target_tokens = []
-            contexts_Z = []
+
+            implicitness_tokens = []
             for i, line in enumerate(input_tokens):
                 line = ' '.join(line.split()[:self.config.max_length - 25])
-                context_step_0, prompt = prompt_for_target_inferring(line)
-                contexts_Z.append(context_step_0)
+                prompt = prompt_for_implicitness_inferring(line)
+                implicitness_tokens.append(prompt)
+
+            # Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.",  Detect if implict speech is being used to express an opinion about a target in the sentence Consider - Contextual Dependence: For example, the phrase "Try the tandoori salmon!" lacks explicit sentiment words, but the recommendation implies a positive sentiment based on cultural understanding and context. - Absence of Direct Opinion Expression: For example, "The new mobile phone can just fit in my pocket" implies a positive sentiment about the phones portability without using explicit positive adjectives. - Irony or Sarcasm: For example, saying "What a wonderful day!" in the middle of a storm conveys a negative sentiment through irony. - Dependence on Pragmatic Theories: For instance, a polite statement like "Its not the best service Ive experienced" might imply dissatisfaction, though it appears mild or neutral on the surface. - Multi-Hop Reasoning: For instance, the statement "The book was on the top shelf" might require reasoning about the inconvenience of reaching it to infer a negative sentiment. Return a "True" or "False" boolean if implicit speech is being used regardless of its polarity.
+            batch_implicitness_input = self.tokenizer.batch_encode_plus(implicitness_tokens, padding=True, return_tensors='pt',
+                                                           max_length=self.config.max_length)
+            batch_implicitness_input = batch_implicitness_input.data
+
+            target_tokens = []
+            for i, line in enumerate(input_tokens):
+                line = ' '.join(line.split()[:self.config.max_length - 25])
+                prompt = prompt_for_target_inferring(line)
                 target_tokens.append(prompt)
 
             # Given the sentence "the gray color was a good choice.", identify the target (entitiy or subject) being discussed. The target might be explicitely mentioned in the text or referred to indirectly. If the target is not explicitly mentioned select the most appropriate approximation of the Target entity type from this Named Entity Recognition Vocabulary: CARDINAL, DATE, EVENT, FAC, GPE, LANGUAGE, LAW, LOC, MONEY, NORP, ORDINAL, ORG, PERCENT, PERSON, PRODUCT, QUANTITY, TIME, WORK_OF_ART
@@ -138,25 +148,32 @@ class MyDataLoader:
                                                              max_length=self.config.max_length)
             batch_targets = batch_targets.data
 
+            #targets = [self.tokenizer.decode(ids) for ids in batch_targets['input_ids']]
+            #targets = [context.replace('<pad>', '').replace('</s>', '').strip() for context in targets]
+
+
             # 0,1,2
             labels = [self.config.label_list[int(w)] for w in input_labels]
             batch_output = self.tokenizer.batch_encode_plus(labels, max_length=3, padding=True,
                                                             return_tensors="pt").data
-            print("Input IDs shape:",  batch_input['input_ids'].shape)
-            print("Attention Mask shape:", batch_input['attention_mask'].shape)
 
             res = {
+                'inferred_implicitness_ids': batch_implicitness_input['input_ids'],  # Full Prompt 4 implicitness Extraction
+                'inferred_implicitness_masks': batch_implicitness_input['attention_mask'],
                 'inferred_target_ids': batch_target_input['input_ids'],# Full Prompt 4 Target Extraction
                 'inferred_target_masks': batch_target_input['attention_mask'],
+
                 'aspect_ids': batch_input['input_ids'],# Full Prompt 4 Aspect of Target Extraction
                 'aspect_masks': batch_input['attention_mask'],
-                'context_A_ids': batch_contexts_A['input_ids'],# encoded prompt context
-                'target_ids': batch_targets['input_ids'], # Aspect Term Ids
-                'target_masks': batch_targets['attention_mask'], # Aspect Term Masks
+                'context_A_ids': batch_contexts_A['input_ids'],# encoded prompt context, 'Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.", '
+                'target_ids': batch_targets['input_ids'],# Aspect Term Ids 'Given the sentence "the gray color was a good choice.", which specific aspect of gray color is possibly mentioned?'
+
+                'target_masks': batch_targets['attention_mask'],# Aspect Term Masks
+
                 'output_ids': batch_output['input_ids'],# raw sentiment label
-                'output_masks': batch_output['attention_mask'], #
-                'input_labels': torch.tensor(input_labels), #0, 1, 2
-                'implicits': torch.tensor(implicits),  # 0,1
+                'output_masks': batch_output['attention_mask'],
+                'input_labels': torch.tensor(input_labels),# 0, 1, 2
+                'implicits': torch.tensor(implicits),# 0,1
                 #'upos_ids': upos_ids, #0,1
                 #'head_ids': head_ids,  # 0,1
                 #'deprel_ids': deprel_ids,  # 0,1
