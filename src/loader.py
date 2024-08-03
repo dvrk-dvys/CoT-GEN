@@ -190,7 +190,7 @@ class Preprocessor:
     def __init__(self, config):
         self.config = config
         self.NLPanalyzer = NLPTextAnalyzer()
-        self.nlp = spacy.load("en_core_web_lgf")
+        self.nlp = spacy.load("en_core_web_lg")
 
     def read_file(self):
         dataname = self.config.dataname
