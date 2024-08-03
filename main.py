@@ -20,10 +20,10 @@ class Template:
         config.dataname = config.data_name
         set_seed(config.seed)
 
-        if torch.backends.mps.is_available():
-            config.device = torch.device("mps")
-        else:
-            config.device = torch.device("cpu")
+        #if torch.backends.mps.is_available():
+        #    config.device = torch.device("mps")
+        #else:
+        config.device = torch.device("cpu")
         names = [config.model_size, config.dataname]
         config.save_name = '_'.join(list(map(str, names))) + '_{}.pth.tar'
         self.config = config

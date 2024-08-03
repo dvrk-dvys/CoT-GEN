@@ -48,15 +48,23 @@ def prompt_for_target_inferring(context):
         'or it might be implied through context (implicit). '
         'In cases where the target is implicit, infer the most likely entity type based on the context provided if it were explicitly mentioned.'
         'If more than one is likely, pick the top two that fit best.'
-        'Consider any descriptory words, aspect terms or opinion expressions that may be depending on and pointing to the target.'
+        'Consider any descriptor words, aspect terms or opinion expressions that may be depending on and pointing to the target.'
         'If the text contains neither an explicit or possible implicit target an/or named entity, choose "None".'
     )
     ner_vocabulary = ', '.join(list(ner_vocab.keys()))
     prompt = new_context + instructions + f' Use this Named Entity Recognition Vocabulary: {ner_vocabulary}'
-    #prompt = new_context + f'Your goal is to identify the target in the sentence that being discussed. The target might be explicitely mentioned as a word or phrase in the text or referred to indirectly through implicit speech pointing toward to sentactically unspecified topic.' \
-    #                       f' If the target is not explicitly mentioned in the text select the most appropriate approximation of the Implicit Target entity type using context clues from this Named Entity Recognition Vocabulary:' \
-    #                       f' CARDINAL, DATE, EVENT, FAC, GPE, LANGUAGE, LAW, LOC, MONEY, NORP, ORDINAL, ORG, PERCENT, PERSON, PRODUCT, QUANTITY, TIME, WORK_OF_ART'
-    return new_context, prompt
+    return prompt
+
+def prompt_for_implicitness_inferring(context):
+    new_context = f'Given the sentence "{context}", '
+    prompt = new_context + f' Detect if implict speech is being used to express an opinion about a target in the sentence' \
+                           f' Consider - Contextual Dependence: For example, the phrase "Try the tandoori salmon!" lacks explicit sentiment words, but the recommendation implies a positive sentiment based on cultural understanding and context.' \
+                           f' - Absence of Direct Opinion Expression: For example, "The new mobile phone can just fit in my pocket" implies a positive sentiment about the phones portability without using explicit positive adjectives.' \
+                           f' - Irony or Sarcasm: For example, saying "What a wonderful day!" in the middle of a storm conveys a negative sentiment through irony.' \
+                           f' - Dependence on Pragmatic Theories: For instance, a polite statement like "Its not the best service Ive experienced" might imply dissatisfaction, though it appears mild or neutral on the surface.' \
+                           f' - Multi-Hop Reasoning: For instance, the statement "The book was on the top shelf" might require reasoning about the inconvenience of reaching it to infer a negative sentiment.' \
+                           f' Return a "True" or "False" boolean if implicit speech is being used regardless of its polarity.'
+    return prompt
 
 
 def prompt_direct_inferring(context, target):
