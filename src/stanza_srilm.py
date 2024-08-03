@@ -4,7 +4,7 @@ from typing import List
 from stanza.models.common.doc import Document
 from stanza_batch import batch
 from src.utils import runtime
-import toma
+#import toma
 
 class NLPTextAnalyzer:
     def __init__(self):
