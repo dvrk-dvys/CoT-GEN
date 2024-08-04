@@ -7,6 +7,9 @@ from transformers import get_linear_schedule_with_warmup
 from functools import wraps
 import time
 
+import spacy
+
+nlp = spacy.load("en_core_web_lg")
 
 upos_vocab = {
     'ADJ': 1, 'ADP': 2, 'ADV': 3, 'AUX': 4, 'CCONJ': 5, 'DET': 6,

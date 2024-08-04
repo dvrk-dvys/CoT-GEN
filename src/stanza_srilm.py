@@ -9,7 +9,7 @@ from src.utils import runtime
 class NLPTextAnalyzer:
     def __init__(self):
         stanza.download('en')
-        self.nlp = stanza.Pipeline('en', use_gpu=False)
+        self.nlp = stanza.Pipeline('en', use_gpu=True)
 
     def gen_analysis(self, text):
         doc = self.nlp(text)

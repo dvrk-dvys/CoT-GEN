@@ -6,9 +6,7 @@ import torch.nn as nn
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, f1_score
 from collections import defaultdict
-from src.utils import prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label, ner_vocab
-
-import spacy
+from src.utils import nlp, ner_vocab, prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
 
 
 class PromptTrainer:
@@ -150,7 +148,7 @@ class ThorTrainer:
 
         self.scores, self.lines = [], []
         self.re_init()
-        self.nlp = spacy.load("en_core_web_lg")
+        #self.nlp = spacy.load("en_core_web_lg")
 
 
     def train(self):
@@ -194,7 +192,7 @@ class ThorTrainer:
         #for approx in approximations:
         #similarities[approx] = self.nlp(approx).similarity(self.nlp(target))
         #max(similarities, key=similarities.get)
-        test = self.nlp(approximation).similarity(self.nlp(target))
+        test = nlp(approximation).similarity(nlp(target))
         return test
 
     def calc_approximate_vector_weights(self, approximations, targets):
@@ -368,59 +366,70 @@ class ThorTrainer:
 
         losses = []
         for i, data in enumerate(train_data):
+            try:
+                #****--------
+                target_label_data, implicitness_label_data, approx_vector_weights = self.prepare_step_zero(**data)
+                #****--------
+                step_one_inferred_data = self.prepare_step_one(**data)
+                step_one_inferred_output = self.model.generate(**step_one_inferred_data)
 
-            #****--------
-            target_label_data, implicitness_label_data, approx_vector_weights = self.prepare_step_zero(**data)
-            #****--------
-            step_one_inferred_data = self.prepare_step_one(**data)
-            step_one_inferred_output = self.model.generate(**step_one_inferred_data)
 
+                # Inferred aspect of 'target': color
+                #'target':Battery --the target comes from labelled data
+                step_one_inferred_data = self.prepare_step_two(step_one_inferred_output, data)
 
-            # Inferred aspect of 'target': color
-            #'target':Battery --the target comes from labelled data
-            step_one_inferred_data = self.prepare_step_two(step_one_inferred_output, data)
+                # Inferred implicit opinion expression of the aspect of the 'target' (Battery): 'The gray color was a good choice'
+                step_two_inferred_output = self.model.generate(**step_one_inferred_data)
 
-            # Inferred implicit opinion expression of the aspect of the 'target' (Battery): 'The gray color was a good choice'
-            step_two_inferred_output = self.model.generate(**step_one_inferred_data)
+                #Context: 'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color.'
+                #target: Battery # Opinion Expression: the gray color was a good choice
+                step_two_inferred_data = self.prepare_step_three(step_two_inferred_output, step_one_inferred_data)
 
-            #Context: 'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color.'
-            #target: Battery # Opinion Expression: the gray color was a good choice
-            step_two_inferred_data = self.prepare_step_three(step_two_inferred_output, step_one_inferred_data)
+                #'The sentiment polarity is positive'
+                step_three_inferred_output = self.model.generate(**step_two_inferred_data)
 
-            #'The sentiment polarity is positive'
-            step_three_inferred_output = self.model.generate(**step_two_inferred_data)
+                #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
+                #step_label_data = self.prepare_step_label(step_three_inferred_output, step_two_inferred_data, data)
+                step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
 
-            #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
-            #step_label_data = self.prepare_step_label(step_three_inferred_output, step_two_inferred_data, data)
-            step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
+                #****--------
+                target_loss = self.model(**target_label_data)
+                approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
+                weights = 1 - approx_vector_tensor
+                weighted_loss = target_loss * weights.mean()
+                implicitness_loss = self.model(**implicitness_label_data)
+                #****--------
 
-            #****--------
-            target_loss = self.model(**target_label_data)
-            approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
-            weights = 1 - approx_vector_tensor
-            weighted_loss = target_loss * weights.mean()
-            implicitness_loss = self.model(**implicitness_label_data)
-            #****--------
+                loss = self.model(**step_label_data)
 
-            loss = self.model(**step_label_data)
+                #****--------
+                combined_loss = (
+                        self.config.target_loss_weight * weighted_loss +
+                        self.config.implicitness_loss_weight * implicitness_loss +
+                        self.config.sentiment_loss_weight * loss
+                )
+                losses.append(combined_loss.item())
+                combined_loss.backward()
+                #****--------
 
-            #****--------
-            combined_loss = (
-                    self.config.target_loss_weight * weighted_loss +
-                    self.config.implicitness_loss_weight * implicitness_loss +
-                    self.config.sentiment_loss_weight * loss
-            )
-            losses.append(combined_loss.item())
-            combined_loss.backward()
-            #****--------
+                nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+                description = "Epoch {}, loss:{:.4f}".format(self.global_epoch, np.mean(losses))
+                train_data.set_description(description)
 
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
-            description = "Epoch {}, loss:{:.4f}".format(self.global_epoch, np.mean(losses))
-            train_data.set_description(description)
+                self.config.optimizer.step()
+                self.config.scheduler.step()
+                self.model.zero_grad()
+            except RuntimeError as e:
+                if 'out of memory' in str(e):
+                    print("Out of memory error caught. Switching to CPU.")
+                    self.config.device = torch.device("cpu")
+                    self.model.to(self.config.device)
+                    for data_key in data.keys():
+                        if isinstance(data[data_key], torch.Tensor):
+                            data[data_key] = data[data_key].to(self.config.device)
+                else:
+                    raise e
 
-            self.config.optimizer.step()
-            self.config.scheduler.step()
-            self.model.zero_grad()
 
     def evaluate_step(self, dataLoader=None, mode='valid'):
         self.model.eval()
