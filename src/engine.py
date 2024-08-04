@@ -9,6 +9,10 @@ from collections import defaultdict
 from src.utils import nlp, ner_vocab, prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
 
 
+from torch.cuda.amp import autocast, GradScaler
+scaler = GradScaler()
+
+
 class PromptTrainer:
     def __init__(self, model, config, train_loader, valid_loader, test_loader, start_epoch=0, best_score=0) -> None:
         self.model = model
@@ -404,24 +408,30 @@ class ThorTrainer:
                 #step_label_data = self.prepare_step_label(step_three_inferred_output, step_two_inferred_data, data)
                 step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
 
-                #****--------
-                target_loss = self.model(**target_label_data)
-                approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
-                weights = 1 - approx_vector_tensor
-                weighted_loss = target_loss * weights.mean()
-                implicitness_loss = self.model(**implicitness_label_data)
-                #****--------
+                with autocast():
 
-                loss = self.model(**step_label_data)
+                    #****--------
+                    target_loss = self.model(**target_label_data)
+                    approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
+                    weights = 1 - approx_vector_tensor
+                    weighted_loss = target_loss * weights.mean()
+                    implicitness_loss = self.model(**implicitness_label_data)
+                    #****--------
 
-                #****--------
-                combined_loss = (
-                        self.config.target_loss_weight * weighted_loss +
-                        self.config.implicitness_loss_weight * implicitness_loss +
-                        self.config.sentiment_loss_weight * loss
-                )
+                    loss = self.model(**step_label_data)
+
+                    #****--------
+                    combined_loss = (
+                            self.config.target_loss_weight * weighted_loss +
+                            self.config.implicitness_loss_weight * implicitness_loss +
+                            self.config.sentiment_loss_weight * loss
+                    )
+                scaler.scale(combined_loss).backward()
+                scaler.step(self.config.optimizer)
+                scaler.update()
+
                 losses.append(combined_loss.item())
-                combined_loss.backward()
+                #combined_loss.backward()
                 #****--------
 
                 nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)

@@ -190,6 +190,12 @@ class MyDataLoader:
         else:
             raise 'choose correct reasoning mode: prompt or thor.'
 
+"""
+This preprocessor with Stanza took:
+    Laptops: 1270 + 53 + 401 seconds/21 mins
+    Restaurants:
+    Debug:
+"""
 
 class Preprocessor:
     def __init__(self, config):
