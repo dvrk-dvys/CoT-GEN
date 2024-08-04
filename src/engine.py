@@ -1,21 +1,24 @@
 import os
+import sys
 import torch
 import numpy as np
 import torch.nn as nn
+import logging
 
 from tqdm import tqdm
+from datetime import datetime
 from sklearn.metrics import accuracy_score, f1_score
 from collections import defaultdict
 from src.utils import nlp, ner_vocab, prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
-
+from IPython.display import display, HTML, clear_output
 
 from torch.cuda.amp import autocast, GradScaler
 scaler = GradScaler()
-try:
-    import google.colab
-    in_colab = True
-except ImportError:
-    in_colab = False
+#try:
+#    import google.colab
+#    in_colab = True
+#except ImportError:
+#    in_colab = False
 
 
 
@@ -161,6 +164,8 @@ class ThorTrainer:
         self.scores, self.lines = [], []
         self.re_init()
         #self.nlp = spacy.load("en_core_web_lg")
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger()
 
 
     def train(self):
@@ -183,23 +188,31 @@ class ThorTrainer:
                 torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
                            save_name)
 
-                print('MODEL SAVED:', save_name)
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                message = f'MODEL SAVED at {current_time}: {save_name}'
+                print(message, flush=True)
+                self.logger.info(message)
+                display(HTML(f"<p>{message}</p>"))
                 self.model.to(self.config.device)
                 #--------- Save to Drive
-                if in_colab:
-                    save_name_colab = self.save_name_colab.format(epoch)
-                    if not os.path.exists(self.config.target_dir_colab):
-                        os.makedirs(self.config.target_dir_colab)
-                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
-                               save_name_colab)
+                #if in_colab:
+                save_name_colab = self.save_name_colab.format(epoch)
+                if not os.path.exists(self.config.target_dir_colab):
+                    os.makedirs(self.config.target_dir_colab)
+                torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                           save_name_colab)
 
-                    print('MODEL SAVED to Drive:', save_name)
-                    self.model.to(self.config.device)
+                print('MODEL SAVED to Drive:', save_name_colab, flush=True)
+                self.model.to(self.config.device)
                 #--------- Save to Drive
 
 
             elif epoch - best_iter > self.config.patience:
-                print("Not upgrade for {} steps, early stopping...".format(self.config.patience))
+                # print("Not upgrade for {} steps, early stopping...".format(self.config.patience), flush=True)
+                message = f"Not upgrade for {self.config.patience} steps, early stopping..."
+                print(message, flush=True)
+                self.logger.info(message)
+                display(HTML(f"<p>{message}</p>"))
                 break
             self.model.to(self.config.device)
 
@@ -485,6 +498,10 @@ class ThorTrainer:
                 self.add_output(data, output)
 
         result = self.report_score(mode=mode)
+        message = "output test"
+        self.logger.info(message)
+        display(HTML(f"<p>{message}</p>"))
+        print(message)
         return result
 
     def final_evaluate(self, epoch=0):

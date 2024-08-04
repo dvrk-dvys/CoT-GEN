@@ -229,7 +229,7 @@ if __name__ == '__main__':
     gen_csv = "Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/gen/manual_edits/gen_csv/"
 
     tt_path = "/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/raw/TTCommentExporter-7226101187500723498-201-comments.csv"
-    tt_csv_path = "Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/gen/7226101187500723498-201-THORGEN.csv"
+    tt_csv_path = "./gen/7226101187500723498-201-THORGEN.csv"
     parquet_viewer = dataViewer()
     out_df = parquet_viewer.config_data_vis(train_parquet_path)
     parquet_viewer.save_to_csv(tt_csv_path, out_df)

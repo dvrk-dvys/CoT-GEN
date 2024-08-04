@@ -28,6 +28,6 @@ adam_epsilon: 1e-8
 warmup_steps: 0
 weight_decay: 0.01
 seed: 42
-target_loss_weight: 0.15
-implicitness_loss_weight: 0.15
-sentiment_loss_weight: 0.70
+target_loss_weight: 0.10
+implicitness_loss_weight: 0.10
+sentiment_loss_weight: 0.80
