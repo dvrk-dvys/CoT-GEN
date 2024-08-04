@@ -168,8 +168,8 @@ class MyDataLoader:
                 'inferred_target_ids': batch_target_input['input_ids'],# Full Prompt 4 Target Extraction
                 'inferred_target_masks': batch_target_input['attention_mask'],
 
-                'aspect_ids': batch_input['input_ids'],# Full Prompt 4 Aspect of Target Extraction
-                'aspect_masks': batch_input['attention_mask'],
+                'input_ids': batch_input['input_ids'],# aspect_ids: Full Prompt 4 Aspect of Target Extraction
+                'input_masks': batch_input['attention_mask'], # aspect_masks
                 'context_A_ids': batch_contexts_A['input_ids'],# encoded prompt context, 'Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.", '
                 'target_ids': batch_targets['input_ids'],# Aspect Term Ids 'Given the sentence "the gray color was a good choice.", which specific aspect of gray color is possibly mentioned?'
 

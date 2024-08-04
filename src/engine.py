@@ -11,6 +11,13 @@ from src.utils import nlp, ner_vocab, prompt_for_opinion_inferring, prompt_for_p
 
 from torch.cuda.amp import autocast, GradScaler
 scaler = GradScaler()
+try:
+    import google.colab
+    in_colab = True
+except ImportError:
+    in_colab = False
+
+
 
 
 class PromptTrainer:
@@ -92,7 +99,7 @@ class PromptTrainer:
 
     def final_evaluate(self, epoch=0):
         PATH = self.save_name.format(epoch)
-        self.model.load_state_dict(torch.load(PATH, map_location=self.config.device)['model'])
+        loaded_state_dict = self.model.load_state_dict(torch.load(PATH, map_location=self.config.device)['model'])
         self.model.eval()
         res = self.evaluate_step(self.test_loader, mode='test')
         self.add_instance(res)
@@ -160,7 +167,7 @@ class ThorTrainer:
         for epoch in tqdm(range(self.start_epoch, self.config.epoch_size)):
             self.model.global_epoch = epoch
             self.global_epoch = epoch
-            self.train_step()
+            #self.train_step()
             result = self.evaluate_step(mode='valid')
             self.re_init()
             score = result['default']
@@ -173,19 +180,21 @@ class ThorTrainer:
 
                 if not os.path.exists(self.config.target_dir):
                     os.makedirs(self.config.target_dir)
-                torch.save({'epoch': epoch, 'model': self.model.engine.cpu().state_dict(), 'best_score': best_score},
+                torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
                            save_name)
 
                 print('MODEL SAVED:', save_name)
                 self.model.to(self.config.device)
                 #--------- Save to Drive
-                if not os.path.exists(self.config.target_dir_colab):
-                    os.makedirs(self.config.target_dir_colab)
-                torch.save({'epoch': epoch, 'model': self.model.engine.cpu().state_dict(), 'best_score': best_score},
-                           save_name)
+                if in_colab:
 
-                print('MODEL SAVED to Drive:', save_name)
-                self.model.to(self.config.device)
+                    if not os.path.exists(self.config.target_dir_colab):
+                        os.makedirs(self.config.target_dir_colab)
+                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                               save_name)
+
+                    print('MODEL SAVED to Drive:', save_name)
+                    self.model.to(self.config.device)
                 #--------- Save to Drive
 
 
@@ -269,7 +278,7 @@ class ThorTrainer:
         #'aspect_masks': batch_input['attention_mask'],
         #'context_A_ids': batch_contexts_A['input_ids'],
 
-        aspect_ids, aspect_masks, context_A_ids = [kwargs[w] for w in 'aspect_ids, aspect_masks, context_A_ids'.strip().split(', ')]
+        aspect_ids, aspect_masks, context_A_ids = [kwargs[w] for w in 'input_ids, input_masks, context_A_ids'.strip().split(', ')]
         #aspect
         targets = [self.model.tokenizer.decode(ids) for ids in aspect_ids]
         targets = [context.replace('<pad>', '').replace('</s>', '').strip() for context in targets]
@@ -459,7 +468,11 @@ class ThorTrainer:
         dataiter = dataLoader
         for i, data in tqdm(enumerate(dataiter), total=dataLoader.data_length):
             with torch.no_grad():
-                step_one_inferred_output = self.model.generate(**data)
+                #target_label_data, implicitness_label_data, approx_vector_weights = self.prepare_step_zero(**data)
+
+                step_one_inferred_data = self.prepare_step_one(**data)
+                step_one_inferred_output = self.model.generate(**step_one_inferred_data)
+
 
                 step_one_inferred_data = self.prepare_step_two(step_one_inferred_output, data)
                 step_two_inferred_output = self.model.generate(**step_one_inferred_data)
@@ -467,8 +480,8 @@ class ThorTrainer:
                 step_two_inferred_data = self.prepare_step_three(step_two_inferred_output, step_one_inferred_data)
                 step_three_inferred_output = self.model.generate(**step_two_inferred_data)
 
-                step_label_data = self.prepare_step_label(step_three_inferred_output, step_two_inferred_data, data)
-                output = self.model.evaluate(**step_label_data)
+                step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
+                output = self.model.evaluate(**step_label_data)# output: [0, 0, 0, 1, 0, 0, 0, 0, 1, 0]
                 self.add_output(data, output)
 
         result = self.report_score(mode=mode)
@@ -477,7 +490,9 @@ class ThorTrainer:
     def final_evaluate(self, epoch=0):
         PATH = self.save_name.format(epoch)
         print(PATH)
-        self.model.load_state_dict(torch.load(PATH, map_location=self.config.device)['model'])
+        state_dict = torch.load(PATH, map_location=self.config.device)['model']
+        #new_state_dict = {'engine.' + k: v for k, v in state_dict.items()}
+        self.model.load_state_dict(state_dict)
         self.model.eval()
         res = self.evaluate_step(self.test_loader, mode='test')
         self.add_instance(res)

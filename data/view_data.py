@@ -117,14 +117,52 @@ class dataViewer:
                 col("mutual_information_score").desc(),
                 col("contextual_perplexity").desc(),
                 col("contextual_surprisal").desc(),
-                col("contextual_mutual_information_score").desc()
-                #col("perplexity").asc(),
-                #col("surprisal").asc(),
-                #col("mutual_information_score").asc(),
-                #col("contextual_perplexity").asc(),
-                #col("contextual_surprisal").asc(),
-                #col("contextual_mutual_information_score").asc()
+                col("contextual_mutual_information_score").desc(),
             )
+
+    def config_data_vis(self, path):
+        schema = StructType([
+            StructField("Comment ID", StringType(), True),
+            StructField("Reply to Which Comment", StringType(), True),
+            StructField("User ID", StringType(), True),
+            StructField("Username", StringType(), True),
+            StructField("Nick Name", StringType(), True),
+            StructField("Comment", StringType(), True),
+            StructField("Comment Time", StringType(), True),
+            StructField("Digg Count", IntegerType(), True),
+            StructField("Author Digged", StringType(), True),
+            StructField("Reply Count", IntegerType(), True),
+            StructField("Pinned to Top", StringType(), True),
+            StructField("User Homepage", StringType(), True),
+            StructField("index", LongType(), True),
+            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
+            StructField("token_ids", ArrayType(IntegerType(), True), True),
+            StructField("token_type_ids", ArrayType(IntegerType(), True), True),
+            StructField("attention_mask", ArrayType(IntegerType(), True), True),
+            StructField("raw_text", StringType(), True),
+            StructField("aspect", StringType(), True),
+            StructField("implicitness", BooleanType(), True),  # based on previous error message
+            StructField("polarity", IntegerType(), True),
+            StructField("shannon_entropy", DoubleType(), True),
+            StructField("mutual_information_score", DoubleType(), True),
+            StructField("surprisal", DoubleType(), True),
+            StructField("perplexity", DoubleType(), True),
+            StructField("contextual_mutual_information_score", DoubleType(), True),
+            StructField("contextual_surprisal", DoubleType(), True),
+            StructField("contextual_perplexity", DoubleType(), True),
+
+        ])
+
+        self.parquet_df = (self.spark_session.read
+                           .schema(schema)
+                           .parquet(path)
+                           # .withColumn("core_index", monotonically_increasing_id())
+                           )
+
+        df_len = self.parquet_df.count()
+        half_len = int(df_len / 2)
+        print('The df length is: ', df_len)
+        self.parquet_df.show(n=20, truncate=False)
 
     def savetoParquet(self, parquet_path, df):
         df.show(10, truncate=False)
