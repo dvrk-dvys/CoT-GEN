@@ -166,6 +166,7 @@ class ThorTrainer:
             if score > best_score:
                 best_score, best_iter = score, epoch
                 save_name = self.save_name.format(epoch)
+
                 if not os.path.exists(self.config.target_dir):
                     os.makedirs(self.config.target_dir)
                 torch.save({'epoch': epoch, 'model': self.model.engine.cpu().state_dict(), 'best_score': best_score},
@@ -173,6 +174,17 @@ class ThorTrainer:
 
                 print('MODEL SAVED:', save_name)
                 self.model.to(self.config.device)
+                #--------- Save to Drive
+                if not os.path.exists(self.config.target_dir_colab):
+                    os.makedirs(self.config.target_dir_colab)
+                torch.save({'epoch': epoch, 'model': self.model.engine.cpu().state_dict(), 'best_score': best_score},
+                           save_name)
+
+                print('MODEL SAVED to Drive:', save_name)
+                self.model.to(self.config.device)
+                #--------- Save to Drive
+
+
             elif epoch - best_iter > self.config.patience:
                 print("Not upgrade for {} steps, early stopping...".format(self.config.patience))
                 break

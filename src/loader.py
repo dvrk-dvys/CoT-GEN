@@ -45,6 +45,16 @@ class MyDataLoader:
         else:
             self.data = self.config.preprocessor.forward()
             pkl.dump(self.data, open(path, 'wb'))
+            # --------- Save to Drive
+            try:
+                colab_path = os.path.join(self.config.preprocess_dir_colab,
+                                    '{}_{}_{}.pkl'.format(cfg.data_name, cfg.model_size, cfg.model_path).replace('/', '-'))
+                pkl.dump(self.data, open(colab_path, 'wb'))
+                print('PREPROCESSED DATA SAVED:', colab_path)
+            except:
+                print('Failed to save preprocessed data to drive!')
+                #--------- Save to Drive
+
 
         train_data, valid_data, test_data = self.data[:3]
         self.config.word_dict = self.data[-1]
