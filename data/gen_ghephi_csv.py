@@ -1,4 +1,5 @@
 import pickle
+import re
 import shutil
 
 from pyspark.sql import SparkSession, DataFrame, Row, Column
@@ -13,7 +14,10 @@ import sys
 import multiprocessing as mp
 import pandas as pd
 
-
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
+from pyspark.sql.functions import regexp_replace
+from pyspark.sql.functions import unix_timestamp, from_unixtime
 
 
 # # polarity_key = {0:positive, 1:negative, 2:neutral}
@@ -53,6 +57,16 @@ class dataViewer:
             return spark_df
         else:
             self.pkl_df = spark_df
+
+    #def clean_id_columns(self):
+    #    # Define a UDF to clean the columns by removing unwanted characters
+    #    clean_udf = udf(lambda x: ''.join(filter(str.isalnum, x)) if x else None, StringType())
+
+        # Apply the cleaning UDF to the specified columns
+    #    self.parquet_df = self.parquet_df.withColumn("Comment ID", clean_udf(col("Comment ID"))) \
+    #        .withColumn("Reply to Which Comment", clean_udf(col("Reply to Which Comment"))) \
+    #        .withColumn("User ID", clean_udf(col("User ID")))
+    #    self.parquet_df.show(n=10, truncate=False)
 
     def debug_datafile(self, path):
         if path.endswith('.parquet'):
@@ -98,6 +112,7 @@ class dataViewer:
             df_len = self.parquet_df.count()
             half_len = int(df_len / 2)
             print('The df length is: ', df_len)
+            self.clean_id_columns()
             self.parquet_df.show(n=20, truncate=False)
             #text = self.parquet_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
 
@@ -119,6 +134,15 @@ class dataViewer:
                 col("contextual_surprisal").desc(),
                 col("contextual_mutual_information_score").desc(),
             )
+
+    #@udf(returnType=StringType())
+    #def remove_special_chars_udf(self, string_col):
+    #    if string_col is not None:
+    #        # Remove all non-digit characters and convert to long
+    #        return int(''.join(filter(str.isdigit, string_col)) or '0')
+    #    return None
+    def clean_id_column(self, df, column_name):
+        return df.withColumn(column_name, regexp_replace(col(column_name), r'[^0-9]', ''))
 
     def config_data_vis(self, path):
         schema = StructType([
@@ -164,10 +188,10 @@ class dataViewer:
         print('The df length is: ', df_len)
         self.parquet_df.show(n=20, truncate=False)
 
-        out_df = self.parquet_df.select("Comment ID", "index", "raw_text", "aspect", "implicitness", "polarity",
+        out_df = self.parquet_df.select("index", "Comment ID", "Reply to Which Comment", "User ID", "Username", "Nick Name",
+                                          "raw_text", "Comment Time", "Digg Count", "Author Digged", "Reply Count", "Pinned to Top", "aspect", "implicitness", "polarity",
                                           "shannon_entropy", "mutual_information_score", "surprisal", "perplexity",
-                                          "contextual_mutual_information_score", "contextual_surprisal",
-                                          "contextual_perplexity")
+                                          "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity")
         out_df = out_df.orderBy(
             col("perplexity").desc(),
             col("surprisal").desc(),
@@ -177,6 +201,15 @@ class dataViewer:
             col("contextual_mutual_information_score").desc(),
         )
         out_df.show(n=20, truncate=False)
+
+        # Clean and rename the specified columns
+        out_df = out_df.transform(lambda df: self.clean_id_column(df.withColumnRenamed("Comment ID", "Source"), "Source"))
+        out_df = out_df.transform(
+            lambda df: self.clean_id_column(df.withColumnRenamed("Reply to Which Comment", "Target"), "Target"))
+        out_df = out_df.transform(lambda df: self.clean_id_column(df, "User ID"))
+        #out_df = out_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
+
+        out_df.show(truncate=False)
         return out_df
 
 
@@ -235,6 +268,12 @@ if __name__ == '__main__':
     parquet_viewer.save_to_csv(tt_csv_path, out_df)
 
     parquet_viewer.close_spark_session()
+
+    #id_string = "=""7226164124825158446"""
+    #id_string = re.sub(r'[^a-zA-Z0-9]', '', id_string)
+    #print(id_string)
+
+
 
     #parquet_viewer.read_datafile(laptops_test_gold_pkl_file)
     #text_col = parquet_viewer.outputArray()
