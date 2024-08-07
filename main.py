@@ -88,7 +88,7 @@ if __name__ == '__main__':
                         help='with one-step prompt or multi-step thor reasoning')
     parser.add_argument('-z', '--zero_shot', action='store_true', default=False,
                         help='running under zero-shot mode or fine-tune mode')
-    parser.add_argument('-d', '--data_name', default='debug', choices=['restaurants', 'laptops', 'debug'],
+    parser.add_argument('-d', '--data_name', default='restaurants', choices=['restaurants', 'laptops', 'debug'],
                         help='semeval data name')
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
     parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
