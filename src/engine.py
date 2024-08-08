@@ -548,6 +548,9 @@ class ThorTrainer:
             if i == 0:
                 self.preds[key] += output
                 self.golds[key] += gold.tolist()
+            elif i == 3:
+                print()
+
             else:
                 if i == 1:
                     ids = np.argwhere(np.array(is_implicit) == 0).flatten()
