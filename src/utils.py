@@ -40,7 +40,7 @@ ner_vocab = {
     'LANGUAGE': 6, 'LAW': 7, 'LOC': 8, 'MONEY': 9, 'NORP': 10,
     'ORDINAL': 11, 'ORG': 12, 'PERCENT': 13, 'PERSON': 14,
     'PRODUCT': 15, 'QUANTITY': 16, 'TIME': 17, 'WORK_OF_ART': 18,
-    'NONE': 19
+    'NONE': 19 #'POLICY': 20, 'INTENT': 21, 'BELIEF': 22, 'OPINION': 23, 'IDEA': 24, 'CONFLICT': 25, 'QUALITY' OR DESCRIPTION: 26
 }
 
 def prompt_for_target_inferring(context):
@@ -53,6 +53,7 @@ def prompt_for_target_inferring(context):
         'If more than one is likely, pick the top two that fit best.'
         'Consider any descriptor words, aspect terms or opinion expressions that may be depending on and pointing to the target.'
         'If the text contains neither an explicit or possible implicit target an/or named entity, choose "None".'
+        'Only choose "None" if it is absolutely clear that no target can be identified.'
     )
     ner_vocabulary = ', '.join(list(ner_vocab.keys()))
     prompt = new_context + instructions + f' Use this Named Entity Recognition Vocabulary: {ner_vocabulary}'

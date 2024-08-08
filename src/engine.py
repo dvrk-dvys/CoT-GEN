@@ -14,11 +14,11 @@ from IPython.display import display, HTML, clear_output
 
 from torch.cuda.amp import autocast, GradScaler
 scaler = GradScaler()
-#try:
-#    import google.colab
-#    in_colab = True
-#except ImportError:
-#    in_colab = False
+try:
+    import google.colab
+    in_colab = True
+except ImportError:
+    in_colab = False
 
 
 
@@ -173,7 +173,7 @@ class ThorTrainer:
         for epoch in tqdm(range(self.start_epoch, self.config.epoch_size)):
             self.model.global_epoch = epoch
             self.global_epoch = epoch
-            #self.train_step()
+            self.train_step()
             result = self.evaluate_step(mode='valid')
             self.re_init()
             score = result['default']
@@ -195,15 +195,15 @@ class ThorTrainer:
                 display(HTML(f"<p>{message}</p>"))
                 self.model.to(self.config.device)
                 #--------- Save to Drive
-                #if in_colab:
-                save_name_colab = self.save_name_colab.format(epoch)
-                if not os.path.exists(self.config.target_dir_colab):
-                    os.makedirs(self.config.target_dir_colab)
-                torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
-                           save_name_colab)
+                if in_colab:
+                    save_name_colab = self.save_name_colab.format(epoch)
+                    if not os.path.exists(self.config.target_dir_colab):
+                        os.makedirs(self.config.target_dir_colab)
+                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                               save_name_colab)
 
-                print('MODEL SAVED to Drive:', save_name_colab, flush=True)
-                self.model.to(self.config.device)
+                    print('MODEL SAVED to Drive:', save_name_colab, flush=True)
+                    self.model.to(self.config.device)
                 #--------- Save to Drive
 
 
@@ -246,8 +246,8 @@ class ThorTrainer:
         return loss_weights
 
     def prepare_step_zero(self, **kwargs):
-        inferred_target_prompt_ids, inferred_target_prompt_masks, target_ids, target_masks, inferred_implicitness_ids, inferred_implicitness_masks, implicits = [kwargs[w] for w in
-        'inferred_target_ids, inferred_target_masks, target_ids, target_masks, inferred_implicitness_ids, inferred_implicitness_masks, implicits'.strip().split(', ')]
+        inferred_target_prompt_ids, inferred_target_prompt_masks, target_ids, target_masks, context_A_ids, context_A_masks, inferred_implicitness_prompt_ids, inferred_implicitness_prompt_masks, implicits = [kwargs[w] for w in
+        'inferred_target_ids, inferred_target_masks, target_ids, target_masks, context_A_ids, context_A_masks, inferred_implicitness_prompt_ids, inferred_implicitness_prompt_masks, implicits'.strip().split(', ')]
 
         # Infer Target
         prompts = [self.model.tokenizer.decode(ids) for ids in inferred_target_prompt_ids]
@@ -269,22 +269,29 @@ class ThorTrainer:
         implicit_labels = list(map(lambda i: "True" if i == 1 else "False", implicits_list))
         #print(implicit_labels[0])
 
-        inferred_implicits = self.model.generate(**target_res)
-        approx_vector_weights = self.calc_approximate_vector_weights(inferred_implicits, labeled_targets)
+        inferred_targets = self.model.generate(**target_res)
+        approx_vector_weights = self.calc_approximate_vector_weights(inferred_targets, labeled_targets)
+
+        inferred_targets = self.model.tokenizer.batch_encode_plus(inferred_targets, padding=True, return_tensors='pt',
+                                                              max_length=self.config.max_length)
+        inferred_targets = inferred_targets.data['input_ids']
+        approx_embeddings = self.model.head_embeddings(context_A_ids, inferred_targets)
+        target_embeddings = self.model.head_embeddings(context_A_ids, target_ids)
+
         batch_implicit_labels = self.model.tokenizer.batch_encode_plus(implicit_labels, padding=True, return_tensors='pt',
                                                               max_length=self.config.max_length)
         batch_implicit_labels = batch_implicit_labels.data
 
         implicitness_res = {
-            'input_ids': inferred_implicitness_ids,# Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.",  Detect if implict speech is being used to express an opinion about a target in the sentence Consider - Contextual Dependence: For example, the phrase "Try the tandoori salmon!" lacks explicit sentiment words, but the recommendation implies a positive sentiment based on cultural understanding and context. - Absence of Direct Opinion Expression: For example, "The new mobile phone can just fit in my pocket" implies a positive sentiment about the phones portability without using explicit positive adjectives. - Irony or Sarcasm: For example, saying "What a wonderful day!" in the middle of a storm conveys a negative sentiment through irony. - Dependence on Pragmatic Theories: For instance, a polite statement like "Its not the best service Ive experienced" might imply dissatisfaction, though it appears mild or neutral on the surface. - Multi-Hop Reasoning: For instance, the statement "The book was on the top shelf" might require reasoning about the inconvenience of reaching it to infer a negative sentiment. Return a "True" or "False" boolean if implicit speech is being used regardless of its polarity.
-            'input_masks': inferred_implicitness_masks,
+            'input_ids': inferred_implicitness_prompt_ids,# Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.",  Detect if implict speech is being used to express an opinion about a target in the sentence Consider - Contextual Dependence: For example, the phrase "Try the tandoori salmon!" lacks explicit sentiment words, but the recommendation implies a positive sentiment based on cultural understanding and context. - Absence of Direct Opinion Expression: For example, "The new mobile phone can just fit in my pocket" implies a positive sentiment about the phones portability without using explicit positive adjectives. - Irony or Sarcasm: For example, saying "What a wonderful day!" in the middle of a storm conveys a negative sentiment through irony. - Dependence on Pragmatic Theories: For instance, a polite statement like "Its not the best service Ive experienced" might imply dissatisfaction, though it appears mild or neutral on the surface. - Multi-Hop Reasoning: For instance, the statement "The book was on the top shelf" might require reasoning about the inconvenience of reaching it to infer a negative sentiment. Return a "True" or "False" boolean if implicit speech is being used regardless of its polarity.
+            'input_masks': inferred_implicitness_prompt_masks,
             'output_ids': batch_implicit_labels['input_ids'],# ['False', 'False', 'False', 'False', 'False', 'False', 'False', 'False', 'True', 'False']
             'output_masks': batch_implicit_labels['attention_mask'],
         }
 
         target_res = {k: v.to(self.config.device) for k, v in target_res.items()}
         implicitness_res = {k: v.to(self.config.device) for k, v in implicitness_res.items()}
-        return target_res, implicitness_res, approx_vector_weights
+        return target_res, implicitness_res, approx_vector_weights, approx_embeddings, target_embeddings
 
     def prepare_step_one(self, **kwargs):
         #'aspect_ids': batch_input['input_ids'],
@@ -406,11 +413,11 @@ class ThorTrainer:
         for i, data in enumerate(train_data):
             try:
                 #****--------
-                target_label_data, implicitness_label_data, approx_vector_weights = self.prepare_step_zero(**data)
+                target_label_data, implicitness_label_data, approx_vector_weights,\
+                    approx_embeddings, target_embeddings = self.prepare_step_zero(**data)
                 #****--------
                 step_one_inferred_data = self.prepare_step_one(**data)
                 step_one_inferred_output = self.model.generate(**step_one_inferred_data)
-
 
                 # Inferred aspect of 'target': color
                 #'target':Battery --the target comes from labelled data
@@ -434,9 +441,13 @@ class ThorTrainer:
 
                     #****--------
                     target_loss = self.model(**target_label_data)
-                    approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
-                    weights = 1 - approx_vector_tensor
-                    weighted_loss = target_loss * weights.mean()
+                    #approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
+                    #weights = 1 - approx_vector_tensor
+                    #weighted_loss = target_loss * weights.mean()
+
+                    cosine_similarity = nn.CosineSimilarity(dim=1)
+                    similarity_scores = cosine_similarity(approx_embeddings, target_embeddings)
+                    approximation_loss = 1 - similarity_scores.mean()
                     implicitness_loss = self.model(**implicitness_label_data)
                     #****--------
 
@@ -444,16 +455,17 @@ class ThorTrainer:
 
                     #****--------
                     combined_loss = (
-                            self.config.target_loss_weight * weighted_loss +
-                            self.config.implicitness_loss_weight * implicitness_loss +
-                            self.config.sentiment_loss_weight * loss
+                            self.config.target_loss_alpha * target_loss +
+                            self.config.approximation_loss_alpha * approximation_loss +
+                            self.config.implicitness_loss_alpha * implicitness_loss +
+                            self.config.sentiment_loss_alpha * loss
                     )
-                scaler.scale(combined_loss).backward()
-                scaler.step(self.config.optimizer)
-                scaler.update()
+
 
                 losses.append(combined_loss.item())
                 #combined_loss.backward()
+                scaler.step(self.config.optimizer)
+                scaler.update()
                 #****--------
 
                 nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
@@ -481,7 +493,8 @@ class ThorTrainer:
         dataiter = dataLoader
         for i, data in tqdm(enumerate(dataiter), total=dataLoader.data_length):
             with torch.no_grad():
-                #target_label_data, implicitness_label_data, approx_vector_weights = self.prepare_step_zero(**data)
+                target_label_data, implicitness_label_data, approx_vector_weights,\
+                    approx_embeddings, target_embeddings = self.prepare_step_zero(**data)
 
                 step_one_inferred_data = self.prepare_step_one(**data)
                 step_one_inferred_output = self.model.generate(**step_one_inferred_data)
@@ -495,7 +508,7 @@ class ThorTrainer:
 
                 step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
                 output = self.model.evaluate(**step_label_data)# output: [0, 0, 0, 1, 0, 0, 0, 0, 1, 0]
-                self.add_output(data, output)
+                self.add_output(data, output, approx_embeddings, target_embeddings)
 
         result = self.report_score(mode=mode)
         message = "output test"
@@ -525,12 +538,13 @@ class ThorTrainer:
 
     def re_init(self):
         self.preds, self.golds = defaultdict(list), defaultdict(list)
-        self.keys = ['total', 'explicits', 'implicits']
+        self.keys = ['total', 'explicits', 'implicits', 'approx']
 
-    def add_output(self, data, output):
+    def add_output(self, data, output, approx_embeddings, target_embeddings):
         is_implicit = data['implicits'].tolist()
         gold = data['input_labels']
         for i, key in enumerate(self.keys):
+
             if i == 0:
                 self.preds[key] += output
                 self.golds[key] += gold.tolist()
@@ -541,6 +555,8 @@ class ThorTrainer:
                     ids = np.argwhere(np.array(is_implicit) == 1).flatten()
                 self.preds[key] += [output[w] for w in ids]
                 self.golds[key] += [gold.tolist()[w] for w in ids]
+        print()
+
 
     def report_score(self, mode='valid'):
         res = {}
