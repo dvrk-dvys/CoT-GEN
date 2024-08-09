@@ -59,7 +59,7 @@ class MyDataLoader:
         train_data, valid_data, test_data = self.data[:3]
         self.config.word_dict = self.data[-1]
 
-        load_data = lambda dataset: DataLoader(MyDataset(dataset), num_workers=0, pin_memory=True, worker_init_fn=self.worker_init, \
+        load_data = lambda dataset: DataLoader(MyDataset(dataset), num_workers=0, pin_memory=False, worker_init_fn=self.worker_init, \
                                                shuffle=self.config.shuffle, batch_size=self.config.batch_size,
                                                collate_fn=self.collate_fn)
         train_loader, valid_loader, test_loader = map(load_data, [train_data, valid_data, test_data])
@@ -249,7 +249,6 @@ class Preprocessor:
                 implicit = cur_data['implicits'][i]
             label = cur_data['labels'][i]
             implicit = int(implicit)
-
             upos = nlp_data[i]['upos_list']
             heads = nlp_data[i]['head_list']
             deprel = nlp_data[i]['deprel_list']
