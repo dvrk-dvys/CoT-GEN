@@ -11,8 +11,8 @@ output_channels: 100
 speaker_emb_dims: 300
 project_dims: 300
 max_length: 300
-#batch_size: 64
-batch_size: 16
+batch_size: 64
+#batch_size: 16
 epoch_size: 20
 train_mode: random
 filters: [3,4,5]
@@ -28,8 +28,11 @@ adam_epsilon: 1e-8
 warmup_steps: 0
 weight_decay: 0.01
 seed: 42
+#target_loss_alpha: 0.10
+#implicitness_loss_alpha: 0.20
+#sentiment_loss_alpha: 0.40
+#approximation_loss_alpha: 0.30
 target_loss_alpha: 0.10
 implicitness_loss_alpha: 0.10
 sentiment_loss_alpha: 0.60
-none_penalty_weight: 0.15
-approximation_loss_alpha: 0.5
+approximation_loss_alpha: 0.10

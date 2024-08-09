@@ -10,7 +10,7 @@ from datetime import datetime
 from sklearn.metrics import accuracy_score, f1_score
 from collections import defaultdict
 from src.utils import nlp, ner_vocab, prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
-from IPython.display import display, HTML, clear_output
+from IPython.display import display, clear_output
 
 from torch.cuda.amp import autocast, GradScaler
 scaler = GradScaler()
@@ -178,7 +178,22 @@ class ThorTrainer:
             self.re_init()
             score = result['default']
             self.add_instance(result)
-            res = self.get_best()
+            _res = self.get_best()
+
+            message = f'EPOCH {epoch} Eval:', result
+            print(message, flush=True)
+            self.logger.info(message)
+
+            self.add_instance(result)
+            _res = self.get_best()
+
+            #if epoch == 2:
+            #    print()
+            #elif epoch == 1:
+            #    print()
+            #elif epoch == 0:
+            #    print()
+
 
             if score > best_score:
                 best_score, best_iter = score, epoch
@@ -192,7 +207,6 @@ class ThorTrainer:
                 message = f'MODEL SAVED at {current_time}: {save_name}'
                 print(message, flush=True)
                 self.logger.info(message)
-                display(HTML(f"<p>{message}</p>"))
                 self.model.to(self.config.device)
                 #--------- Save to Drive
                 if in_colab:
@@ -212,7 +226,6 @@ class ThorTrainer:
                 message = f"Not upgrade for {self.config.patience} steps, early stopping..."
                 print(message, flush=True)
                 self.logger.info(message)
-                display(HTML(f"<p>{message}</p>"))
                 break
             self.model.to(self.config.device)
 
@@ -269,8 +282,8 @@ class ThorTrainer:
         implicit_labels = list(map(lambda i: "True" if i == 1 else "False", implicits_list))
         #print(implicit_labels[0])
 
-        inferred_targets = self.model.generate(**target_res)
-        approx_vector_weights = self.calc_approximate_vector_weights(inferred_targets, labeled_targets)
+        inferred_targets = self.model.generate(**target_res)# ['WORK_OF_ART', 'WORK_OF_ART', 'WORK_OF_ART', 'PC', 'WORK_OF_ART', 'games', 'LANGUAGE', 'Sony', 'Software', 'LANGUAGE']
+        #approx_vector_weights = self.calc_approximate_vector_weights(inferred_targets, labeled_targets)
 
         inferred_targets = self.model.tokenizer.batch_encode_plus(inferred_targets, padding=True, return_tensors='pt',
                                                               max_length=self.config.max_length)
@@ -291,7 +304,7 @@ class ThorTrainer:
 
         target_res = {k: v.to(self.config.device) for k, v in target_res.items()}
         implicitness_res = {k: v.to(self.config.device) for k, v in implicitness_res.items()}
-        return target_res, implicitness_res, approx_vector_weights, approx_embeddings, target_embeddings
+        return target_res, implicitness_res, approx_embeddings, target_embeddings #approx_vector_weights
 
     def prepare_step_one(self, **kwargs):
         #'aspect_ids': batch_input['input_ids'],
@@ -413,8 +426,7 @@ class ThorTrainer:
         for i, data in enumerate(train_data):
             try:
                 #****--------
-                target_label_data, implicitness_label_data, approx_vector_weights,\
-                    approx_embeddings, target_embeddings = self.prepare_step_zero(**data)
+                target_label_data, implicitness_label_data, approx_embeddings, target_embeddings = self.prepare_step_zero(**data)
                 #****--------
                 step_one_inferred_data = self.prepare_step_one(**data)
                 step_one_inferred_output = self.model.generate(**step_one_inferred_data)
@@ -434,7 +446,6 @@ class ThorTrainer:
                 step_three_inferred_output = self.model.generate(**step_two_inferred_data)
 
                 #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
-                #step_label_data = self.prepare_step_label(step_three_inferred_output, step_two_inferred_data, data)
                 step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
 
                 with autocast():
@@ -460,7 +471,6 @@ class ThorTrainer:
                             self.config.implicitness_loss_alpha * implicitness_loss +
                             self.config.sentiment_loss_alpha * loss
                     )
-
 
                 losses.append(combined_loss.item())
                 #combined_loss.backward()
@@ -493,12 +503,10 @@ class ThorTrainer:
         dataiter = dataLoader
         for i, data in tqdm(enumerate(dataiter), total=dataLoader.data_length):
             with torch.no_grad():
-                target_label_data, implicitness_label_data, approx_vector_weights,\
-                    approx_embeddings, target_embeddings = self.prepare_step_zero(**data)
+                target_label_data, implicitness_label_data, approx_embeddings, target_embeddings = self.prepare_step_zero(**data)
 
                 step_one_inferred_data = self.prepare_step_one(**data)
                 step_one_inferred_output = self.model.generate(**step_one_inferred_data)
-
 
                 step_one_inferred_data = self.prepare_step_two(step_one_inferred_output, data)
                 step_two_inferred_output = self.model.generate(**step_one_inferred_data)
@@ -511,10 +519,9 @@ class ThorTrainer:
                 self.add_output(data, output, approx_embeddings, target_embeddings)
 
         result = self.report_score(mode=mode)
-        message = "output test"
+        message = "output test: Finish evaluate Step"
         self.logger.info(message)
-        display(HTML(f"<p>{message}</p>"))
-        print(message)
+        print(message, flush=True)
         return result
 
     def final_evaluate(self, epoch=0):
@@ -538,19 +545,20 @@ class ThorTrainer:
 
     def re_init(self):
         self.preds, self.golds = defaultdict(list), defaultdict(list)
-        self.keys = ['total', 'explicits', 'implicits', 'approx']
+        self.keys = ['total', 'explicits', 'implicits', 'approx'] #'target'
 
     def add_output(self, data, output, approx_embeddings, target_embeddings):
         is_implicit = data['implicits'].tolist()
         gold = data['input_labels']
-        for i, key in enumerate(self.keys):
+        cosine_similarity = nn.CosineSimilarity(dim=1)
+        similarity_scores = cosine_similarity(approx_embeddings, target_embeddings)
 
+        for i, key in enumerate(self.keys):
             if i == 0:
                 self.preds[key] += output
                 self.golds[key] += gold.tolist()
             elif i == 3:
-                print()
-
+                self.preds[key] += similarity_scores.cpu().tolist()
             else:
                 if i == 1:
                     ids = np.argwhere(np.array(is_implicit) == 0).flatten()
@@ -558,7 +566,6 @@ class ThorTrainer:
                     ids = np.argwhere(np.array(is_implicit) == 1).flatten()
                 self.preds[key] += [output[w] for w in ids]
                 self.golds[key] += [gold.tolist()[w] for w in ids]
-        print()
 
 
     def report_score(self, mode='valid'):
@@ -567,7 +574,25 @@ class ThorTrainer:
         res['F1_SA'] = f1_score(self.golds['total'], self.preds['total'], labels=[0, 1, 2], average='macro')
         res['F1_ESA'] = f1_score(self.golds['explicits'], self.preds['explicits'], labels=[0, 1, 2], average='macro')
         res['F1_ISA'] = f1_score(self.golds['implicits'], self.preds['implicits'], labels=[0, 1, 2], average='macro')
-        res['default'] = res['F1_SA']
+        #res['F1_TARGET'] = f1_score(self.golds['targets'], self.preds['targets'], labels=[0, 1, 2], average='macro')
+        res['Avg_Cosine_Similarity'] = np.mean(self.preds['approx'])  # 'approx' key holds similarity scores
+
+        #res['composite_score'] = (
+        #        0.3 * res['F1_SA'] +
+        #        0.3 * res['F1_ESA'] +
+        #        0.3 * res['F1_ISA'] +
+        #        0.1 * res['Avg_Cosine_Similarity']
+        #)
+
+        res['composite_score'] = (
+                0.7 * res['F1_SA'] + #Overall Sentiment
+                0.05 * res['F1_ESA'] + #Label Explicit Sentiment as Explicit
+                0.05 * res['F1_ISA'] + #Label Implicit Sentiment as Implicit
+                0.1 * res['Avg_Cosine_Similarity']
+        )
+
+        #res['default'] = res['F1_SA']
+        res['default'] = res['composite_score']
         res['mode'] = mode
         for k, v in res.items():
             if isinstance(v, float):

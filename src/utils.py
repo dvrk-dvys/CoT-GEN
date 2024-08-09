@@ -39,8 +39,10 @@ ner_vocab = {
     'CARDINAL': 1, 'DATE': 2, 'EVENT': 3, 'FAC': 4, 'GPE': 5,
     'LANGUAGE': 6, 'LAW': 7, 'LOC': 8, 'MONEY': 9, 'NORP': 10,
     'ORDINAL': 11, 'ORG': 12, 'PERCENT': 13, 'PERSON': 14,
-    'PRODUCT': 15, 'QUANTITY': 16, 'TIME': 17, 'WORK_OF_ART': 18,
-    'NONE': 19 #'POLICY': 20, 'INTENT': 21, 'BELIEF': 22, 'OPINION': 23, 'IDEA': 24, 'CONFLICT': 25, 'QUALITY' OR DESCRIPTION: 26
+    'PRODUCT': 15, 'SPEC': 16, 'QUANTITY': 17, 'QUALITY': 18,
+    'TIME': 19, 'WORK_OF_ART': 20, 'ENTITY': 21, 'POLICY': 22,
+    'INTENT': 23, 'BELIEF': 24, 'OPINION': 25, 'IDEA': 26,
+    'CONFLICT': 27, 'SELF': 28
 }
 
 def prompt_for_target_inferring(context):
@@ -49,11 +51,12 @@ def prompt_for_target_inferring(context):
         'Your task is to identify the **target** being discussed in the sentence. '
         'The target could be explicitly mentioned (e.g., a product, service, feature, person, topic, idea, etc.) '
         'or it might be implied through context (implicit). '
-        'In cases where the target is implicit, infer the most likely entity type based on the context provided if it were explicitly mentioned.'
+        'In cases where the target is implicit, infer the most likely entity type from the Named Entity Recognition Vocabulary (below) '
+        'Think based on the context provided in the sentence and select the entity type as if it were explicitly mentioned.'
         'If more than one is likely, pick the top two that fit best.'
-        'Consider any descriptor words, aspect terms or opinion expressions that may be depending on and pointing to the target.'
-        'If the text contains neither an explicit or possible implicit target an/or named entity, choose "None".'
-        'Only choose "None" if it is absolutely clear that no target can be identified.'
+        'Consider any descriptor words, aspect terms or opinion expressions that may be depending on and pointing to the target you are considering.'
+        #'If the text contains neither an explicit or implicit target and/or viable named entity in the vocabulary, choose "NONE".'
+        #'Only choose "NONE" if it is absolutely clear that no target can be identified.'
     )
     ner_vocabulary = ', '.join(list(ner_vocab.keys()))
     prompt = new_context + instructions + f' Use this Named Entity Recognition Vocabulary: {ner_vocabulary}'
