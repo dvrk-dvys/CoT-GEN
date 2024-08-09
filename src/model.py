@@ -12,7 +12,14 @@ class LLMBackbone(nn.Module):
     def forward(self, **kwargs):
         input_ids, input_masks, output_ids, output_masks = [kwargs[w] for w in '\
         input_ids, input_masks, output_ids, output_masks'.strip().split(', ')]
+
+        output_ids = output_ids.to("cpu")
         output_ids[output_ids[:, :] == self.tokenizer.pad_token_id] = -100
+        output_ids = output_ids.to(self.config.device)
+        input_ids = input_ids.to(self.config.device)
+        input_masks = input_masks.to(self.config.device)
+        output_masks = output_masks.to(self.config.device)
+
         output = self.engine(input_ids, attention_mask=input_masks, decoder_input_ids=None,
                              decoder_attention_mask=output_masks, labels=output_ids)
         loss = output[0]
