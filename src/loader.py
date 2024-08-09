@@ -59,9 +59,13 @@ class MyDataLoader:
         train_data, valid_data, test_data = self.data[:3]
         self.config.word_dict = self.data[-1]
 
-        load_data = lambda dataset: DataLoader(MyDataset(dataset), num_workers=0, pin_memory=False, worker_init_fn=self.worker_init, \
-                                               shuffle=self.config.shuffle, batch_size=self.config.batch_size,
-                                               collate_fn=self.collate_fn)
+        load_data = lambda dataset: DataLoader(MyDataset(dataset),
+                                               num_workers=0,
+                                               pin_memory=False,
+                                               worker_init_fn=self.worker_init,
+                                               shuffle=self.config.shuffle,
+                                               batch_size=self.config.batch_size,
+                                               collate_fn=self.collate_fn)# pin_memory=True when locally run
         train_loader, valid_loader, test_loader = map(load_data, [train_data, valid_data, test_data])
         train_loader.data_length, valid_loader.data_length, test_loader.data_length = math.ceil(
             len(train_data) / self.config.batch_size), \
