@@ -12,8 +12,8 @@ from collections import defaultdict
 from src.utils import nlp, ner_vocab, prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
 from IPython.display import display, clear_output
 
-from torch.cuda.amp import autocast, GradScaler
-scaler = GradScaler()
+#from torch.cuda.amp import autocast, GradScaler
+#scaler = GradScaler()
 try:
     import google.colab
     in_colab = True
@@ -448,34 +448,34 @@ class ThorTrainer:
                 #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
                 step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
 
-                with autocast():
+                #with autocast():
 
-                    #****--------
-                    target_loss = self.model(**target_label_data)
-                    #approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
-                    #weights = 1 - approx_vector_tensor
-                    #weighted_loss = target_loss * weights.mean()
+                #****--------
+                target_loss = self.model(**target_label_data)
+                #approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
+                #weights = 1 - approx_vector_tensor
+                #weighted_loss = target_loss * weights.mean()
 
-                    cosine_similarity = nn.CosineSimilarity(dim=1)
-                    similarity_scores = cosine_similarity(approx_embeddings, target_embeddings)
-                    approximation_loss = 1 - similarity_scores.mean()
-                    implicitness_loss = self.model(**implicitness_label_data)
-                    #****--------
+                cosine_similarity = nn.CosineSimilarity(dim=1)
+                similarity_scores = cosine_similarity(approx_embeddings, target_embeddings)
+                approximation_loss = 1 - similarity_scores.mean()
+                implicitness_loss = self.model(**implicitness_label_data)
+                #****--------
 
-                    loss = self.model(**step_label_data)
+                loss = self.model(**step_label_data)
 
-                    #****--------
-                    combined_loss = (
-                            self.config.target_loss_alpha * target_loss +
-                            self.config.approximation_loss_alpha * approximation_loss +
-                            self.config.implicitness_loss_alpha * implicitness_loss +
-                            self.config.sentiment_loss_alpha * loss
-                    )
+                #****--------
+                combined_loss = (
+                        self.config.target_loss_alpha * target_loss +
+                        self.config.approximation_loss_alpha * approximation_loss +
+                        self.config.implicitness_loss_alpha * implicitness_loss +
+                        self.config.sentiment_loss_alpha * loss
+                )
 
                 losses.append(combined_loss.item())
                 #combined_loss.backward()
-                scaler.step(self.config.optimizer)
-                scaler.update()
+                #scaler.step(self.config.optimizer)
+                #scaler.update()
                 #****--------
 
                 nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
