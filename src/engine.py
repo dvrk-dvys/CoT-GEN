@@ -436,86 +436,86 @@ class ThorTrainer:
 
         losses = []
         for i, data in enumerate(train_data):
-            #try:
-            #****--------
-            target_label_data, approx_embeddings, target_embeddings, implicitness_label_data = self.prepare_step_zero(**data)
-            #****--------
-            step_one_inferred_data = self.prepare_step_one(**data)
-            step_one_inferred_output = self.model.generate(**step_one_inferred_data)
+            try:
+                #****--------
+                target_label_data, approx_embeddings, target_embeddings, implicitness_label_data = self.prepare_step_zero(**data)
+                #****--------
+                step_one_inferred_data = self.prepare_step_one(**data)
+                step_one_inferred_output = self.model.generate(**step_one_inferred_data)
+    
+                # Inferred aspect of 'target': color
+                #'target':Battery --the target comes from labelled data
+                step_one_inferred_data = self.prepare_step_two(step_one_inferred_output, data)
 
-            # Inferred aspect of 'target': color
-            #'target':Battery --the target comes from labelled data
-            step_one_inferred_data = self.prepare_step_two(step_one_inferred_output, data)
+                # Inferred implicit opinion expression of the aspect of the 'target' (Battery): 'The gray color was a good choice'
+                step_two_inferred_output = self.model.generate(**step_one_inferred_data)
 
-            # Inferred implicit opinion expression of the aspect of the 'target' (Battery): 'The gray color was a good choice'
-            step_two_inferred_output = self.model.generate(**step_one_inferred_data)
+                #Context: 'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color.'
+                #target: Battery # Opinion Expression: the gray color was a good choice
+                step_two_inferred_data = self.prepare_step_three(step_two_inferred_output, step_one_inferred_data)
 
-            #Context: 'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color.'
-            #target: Battery # Opinion Expression: the gray color was a good choice
-            step_two_inferred_data = self.prepare_step_three(step_two_inferred_output, step_one_inferred_data)
+                #'The sentiment polarity is positive'
+                step_three_inferred_output = self.model.generate(**step_two_inferred_data)
 
-            #'The sentiment polarity is positive'
-            step_three_inferred_output = self.model.generate(**step_two_inferred_data)
+                #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
+                step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
 
-            #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
-            step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
+                #with autocast():
 
-            #with autocast():
+                #****--------
+                target_loss = self.model(**target_label_data)
+                #approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
+                #weights = 1 - approx_vector_tensor
+                #weighted_loss = target_loss * weights.mean()
 
-            #****--------
-            target_loss = self.model(**target_label_data)
-            #approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
-            #weights = 1 - approx_vector_tensor
-            #weighted_loss = target_loss * weights.mean()
+                cosine_similarity = nn.CosineSimilarity(dim=1)
+                similarity_scores = cosine_similarity(approx_embeddings, target_embeddings)
+                approximation_loss = 1 - similarity_scores.mean()
+                implicitness_loss = self.model(**implicitness_label_data)
+                #****--------
 
-            cosine_similarity = nn.CosineSimilarity(dim=1)
-            similarity_scores = cosine_similarity(approx_embeddings, target_embeddings)
-            approximation_loss = 1 - similarity_scores.mean()
-            implicitness_loss = self.model(**implicitness_label_data)
-            #****--------
+                loss = self.model(**step_label_data)
 
-            loss = self.model(**step_label_data)
+                #****--------
+                combined_loss = (
+                        self.config.target_loss_alpha * target_loss +
+                        self.config.approximation_loss_alpha * approximation_loss +
+                        self.config.implicitness_loss_alpha * implicitness_loss +
+                        self.config.sentiment_loss_alpha * loss
+                )
 
-            #****--------
-            combined_loss = (
-                    self.config.target_loss_alpha * target_loss +
-                    self.config.approximation_loss_alpha * approximation_loss +
-                    self.config.implicitness_loss_alpha * implicitness_loss +
-                    self.config.sentiment_loss_alpha * loss
-            )
+                losses.append(combined_loss.item())
 
-            losses.append(combined_loss.item())
+                combined_loss = combined_loss / self.config.gradient_accumulation_steps
+                combined_loss.backward()
+                #scaler.step(self.config.optimizer)
+                #scaler.update()
+                #****--------
 
-            combined_loss = combined_loss / self.config.gradient_accumulation_steps
-            combined_loss.backward()
-            #scaler.step(self.config.optimizer)
-            #scaler.update()
-            #****--------
-
-            if (i + 1) % self.config.gradient_accumulation_steps == 0:
-                nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
-                self.config.optimizer.step()
-                self.config.scheduler.step()
-                self.model.zero_grad()
+                if (i + 1) % self.config.gradient_accumulation_steps == 0:
+                    nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+                    self.config.optimizer.step()
+                    self.config.scheduler.step()
+                    self.model.zero_grad()
 
 
-            #nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
-            description = "Epoch {}, loss:{:.4f}".format(self.global_epoch, np.mean(losses))
-            train_data.set_description(description)
+                #nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
+                description = "Epoch {}, loss:{:.4f}".format(self.global_epoch, np.mean(losses))
+                train_data.set_description(description)
 
-            #self.config.optimizer.step()
-            #self.config.scheduler.step()
-            #self.model.zero_grad()
-            #except RuntimeError as e:
-            #    if 'out of memory' in str(e):
-            #        print("Out of memory error caught. Switching to CPU.")
-            #        self.config.device = torch.device("cpu")
-            #        self.model.to(self.config.device)
-            #        for data_key in data.keys():
-            #            if isinstance(data[data_key], torch.Tensor):
-            #                data[data_key] = data[data_key].to(self.config.device)
-            #    else:
-            #        raise e
+                #self.config.optimizer.step()
+                #self.config.scheduler.step()
+                #self.model.zero_grad()
+            except RuntimeError as e:
+                if 'out of memory' in str(e):
+                    print("Out of memory error caught. Switching to CPU.")
+                    self.config.device = torch.device("cpu")
+                    self.model.to(self.config.device)
+                    for data_key in data.keys():
+                        if isinstance(data[data_key], torch.Tensor):
+                            data[data_key] = data[data_key].to(self.config.device)
+                else:
+                    raise e
         if len(train_data) % self.config.gradient_accumulation_steps != 0:
             nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
             self.config.optimizer.step()
