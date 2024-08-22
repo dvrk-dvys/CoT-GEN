@@ -4,6 +4,8 @@ import torch
 import numpy as np
 import torch.nn as nn
 import logging
+import socket
+
 
 from tqdm import tqdm
 from datetime import datetime
@@ -14,13 +16,17 @@ from IPython.display import display, clear_output
 
 #from torch.cuda.amp import autocast, GradScaler
 #scaler = GradScaler()
-try:
-    import google.colab
-    in_colab = True
-except ImportError:
-    in_colab = False
+#try:
+#    import google.colab
+#    in_colab = True
+#except ImportError:
+#    in_colab = False
 
 
+def is_colab():
+    return 'COLAB_GPU' in os.environ or socket.gethostname().startswith('localhost')
+# Global Variable
+in_colab = is_colab()
 
 
 class PromptTrainer:
