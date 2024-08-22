@@ -194,6 +194,12 @@ class ThorTrainer:
             #elif epoch == 0:
             #    print()
 
+            if in_colab:
+                print('Colab environment', flush=True)
+            else:
+                print('Local environment', flush=True)
+
+
 
             if score > best_score:
                 best_score, best_iter = score, epoch
