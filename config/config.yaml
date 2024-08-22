@@ -23,15 +23,11 @@ bert_lr: 2e-4
 patience: 100
 max_grad_norm: 1.0
 warmup_proportion: 0.1
-gradient_accumulation_steps: 1
+gradient_accumulation_steps: 4
 adam_epsilon: 1e-8
 warmup_steps: 0
 weight_decay: 0.01
 seed: 42
-#target_loss_alpha: 0.10
-#implicitness_loss_alpha: 0.20
-#sentiment_loss_alpha: 0.40
-#approximation_loss_alpha: 0.30
 target_loss_alpha: 0.10
 implicitness_loss_alpha: 0.10
 sentiment_loss_alpha: 0.60
