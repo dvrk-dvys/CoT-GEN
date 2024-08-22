@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import pickle as pkl
 
-from src.stanza_srilm import NLPTextAnalyzer
+#from src.stanza_srilm import NLPTextAnalyzer
 
 
 from src.utils import nlp, prompt_for_target_inferring, prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring, prompt_for_implicitness_inferring
@@ -204,6 +204,7 @@ This preprocessor with Stanza took:
 class Preprocessor:
     def __init__(self, config):
         self.config = config
+        from src.stanza_srilm import NLPTextAnalyzer
         self.NLPanalyzer = NLPTextAnalyzer()
         #self.nlp = spacy.load("en_core_web_lg")
 
