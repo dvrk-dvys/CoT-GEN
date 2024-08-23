@@ -7,7 +7,7 @@ from addict import Dict
 import pandas as pd
 
 from src.utils import set_seed, load_params_LLM
-from src.loader import MyDataLoader, NewDataLoader
+from src.loader import MyDataLoader
 from src.model import LLMBackbone
 from src.engine import PromptTrainer, ThorTrainer
 
@@ -21,10 +21,16 @@ class Template:
         config.dataname = config.data_name
         set_seed(config.seed)
 
-        #if torch.backends.mps.is_available():
-        #    config.device = torch.device("mps")
-        #else:
-        config.device = torch.device("cpu")
+        if torch.backends.mps.is_available():
+            config.device = torch.device("mps")
+            print("MPS is available. Device: MPS")
+        elif torch.cuda.is_available():
+            config.device = torch.device("cuda")
+            print("CUDA is available. Device:", torch.cuda.get_device_name(0))
+        else:
+            config.device = torch.device("cpu")
+            print("CUDA & MPS is not available. Using CPU.")
+
         names = [config.model_size, config.dataname]
         config.save_name = '_'.join(list(map(str, names))) + '_{}.pth.tar'
         self.config = config
@@ -83,7 +89,7 @@ if __name__ == '__main__':
                         help='with one-step prompt or multi-step thor reasoning')
     parser.add_argument('-z', '--zero_shot', action='store_true', default=False,
                         help='running under zero-shot mode or fine-tune mode')
-    parser.add_argument('-d', '--data_name', default='debug', choices=['restaurants', 'laptops', 'debug'],
+    parser.add_argument('-d', '--data_name', default='laptops', choices=['restaurants', 'laptops', 'debug'],
                         help='semeval data name')
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
     parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
