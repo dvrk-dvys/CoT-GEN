@@ -4,6 +4,8 @@ import torch
 import numpy as np
 import torch.nn as nn
 import logging
+import socket
+
 
 
 from tqdm import tqdm
@@ -12,6 +14,11 @@ from sklearn.metrics import accuracy_score, f1_score
 from collections import defaultdict
 from src.utils import prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
 from IPython.display import display, HTML, clear_output
+
+def is_colab():
+    return 'COLAB_GPU' in os.environ or socket.gethostname().startswith('localhost')
+# Global Variable
+in_colab = is_colab()
 
 
 class PromptTrainer:
@@ -386,22 +393,32 @@ class ThorTrainer:
                     save_name = self.save_name.format(epoch)
                     if not os.path.exists(self.config.target_dir):
                         os.makedirs(self.config.target_dir)
-                    torch.save(
-                        {'epoch': epoch, 'model': self.model.engine.cpu().state_dict(), 'best_score': best_score},
-                        save_name)
+                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                               save_name)
+
                     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     message = f'MODEL SAVED at {current_time}: {save_name}'
                     print(message, flush=True)
                     self.logger.info(message)
-                    display(HTML(f"<p>{message}</p>"))
-
                     self.model.to(self.config.device)
+                    # --------- Save to Drive
+                    if in_colab:
+                        save_name_colab = self.save_name_colab.format(epoch)
+                        if not os.path.exists(self.config.target_dir_colab):
+                            os.makedirs(self.config.target_dir_colab)
+                        torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                                   save_name_colab)
+
+                        print('MODEL SAVED to Drive:', save_name_colab, flush=True)
+                        self.model.to(self.config.device)
+                    # --------- Save to Drive
+
+
                 elif epoch - best_iter > self.config.patience:
-                    #print("Not upgrade for {} steps, early stopping...".format(self.config.patience), flush=True)
+                    # print("Not upgrade for {} steps, early stopping...".format(self.config.patience), flush=True)
                     message = f"Not upgrade for {self.config.patience} steps, early stopping..."
                     print(message, flush=True)
                     self.logger.info(message)
-                    display(HTML(f"<p>{message}</p>"))
                     break
                 self.model.to(self.config.device)
 
