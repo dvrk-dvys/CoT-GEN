@@ -61,8 +61,8 @@ class ISA_Infer:
 
 if __name__ == '__main__':
     # Define paths
-    config_path = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/config/config.yaml'
-    model_path = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/save/base_restaurants_5.pth.tar'
+    config_path = '/Users/jordanharris/Code/THOR-GEN/config/config.yaml'
+    model_path = '/Users/jordanharris/Code/THOR-GEN/data/save/base_restaurants_0.pth.tar'
 
     # Print the current working directory
     print("Current Working Directory:", os.getcwd())

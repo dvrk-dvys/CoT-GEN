@@ -1,6 +1,6 @@
 data_dir: 'data'
 target_dir: 'data/gen'
-t5_model_path: 'google/flan-t5-base'
+model_path: 'google/flan-t5-base'
 bert_model_path: 'bert-base-uncased'
 spacy_model_path: 'en_core_web_md'
 chat_gpt_model_path: 'gpt-4o' #gpt-4, gpt-3.5-turbo

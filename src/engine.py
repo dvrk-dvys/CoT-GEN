@@ -22,12 +22,10 @@ from IPython.display import display, clear_output
 #except ImportError:
 #    in_colab = False
 
-
 def is_colab():
     return 'COLAB_GPU' in os.environ or socket.gethostname().startswith('localhost')
 # Global Variable
 in_colab = is_colab()
-
 
 class PromptTrainer:
     def __init__(self, model, config, train_loader, valid_loader, test_loader, start_epoch=0, best_score=0) -> None:
@@ -325,11 +323,11 @@ class ThorTrainer:
 
         aspect_ids, aspect_masks, context_A_ids = [kwargs[w] for w in 'input_ids, input_masks, context_A_ids'.strip().split(', ')]
         #aspect
-        targets = [self.model.tokenizer.decode(ids) for ids in aspect_ids]
-        targets = [context.replace('<pad>', '').replace('</s>', '').strip() for context in targets]
+        #targets = [self.model.tokenizer.decode(ids) for ids in aspect_ids]
+        #targets = [context.replace('<pad>', '').replace('</s>', '').strip() for context in targets]
         #print(targets[0])
-        contexts_A = [self.model.tokenizer.decode(ids) for ids in context_A_ids]
-        contexts_A = [context.replace('<pad>', '').replace('</s>', '').strip() for context in contexts_A]
+        #contexts_A = [self.model.tokenizer.decode(ids) for ids in context_A_ids]
+        #contexts_A = [context.replace('<pad>', '').replace('</s>', '').strip() for context in contexts_A]
         #print(contexts_A[0])
 
         res = {
@@ -442,7 +440,7 @@ class ThorTrainer:
                 #****--------
                 step_one_inferred_data = self.prepare_step_one(**data)
                 step_one_inferred_output = self.model.generate(**step_one_inferred_data)
-    
+
                 # Inferred aspect of 'target': color
                 #'target':Battery --the target comes from labelled data
                 step_one_inferred_data = self.prepare_step_two(step_one_inferred_output, data)
@@ -472,11 +470,8 @@ class ThorTrainer:
                 similarity_scores = cosine_similarity(approx_embeddings, target_embeddings)
                 approximation_loss = 1 - similarity_scores.mean()
                 implicitness_loss = self.model(**implicitness_label_data)
-                #****--------
-
                 loss = self.model(**step_label_data)
 
-                #****--------
                 combined_loss = (
                         self.config.target_loss_alpha * target_loss +
                         self.config.approximation_loss_alpha * approximation_loss +
@@ -497,7 +492,6 @@ class ThorTrainer:
                     self.config.optimizer.step()
                     self.config.scheduler.step()
                     self.model.zero_grad()
-
 
                 #nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 description = "Epoch {}, loss:{:.4f}".format(self.global_epoch, np.mean(losses))
@@ -571,7 +565,7 @@ class ThorTrainer:
 
     def re_init(self):
         self.preds, self.golds = defaultdict(list), defaultdict(list)
-        self.keys = ['total', 'explicits', 'implicits', 'approx'] #'target'
+        self.keys = ['total', 'explicits', 'implicits', 'approx'] #, 'target'
 
     def add_output(self, data, output, approx_embeddings, target_embeddings):
         is_implicit = data['implicits'].tolist()
@@ -599,15 +593,8 @@ class ThorTrainer:
         res['F1_SA'] = f1_score(self.golds['total'], self.preds['total'], labels=[0, 1, 2], average='macro')
         res['F1_ESA'] = f1_score(self.golds['explicits'], self.preds['explicits'], labels=[0, 1, 2], average='macro')
         res['F1_ISA'] = f1_score(self.golds['implicits'], self.preds['implicits'], labels=[0, 1, 2], average='macro')
-        #res['F1_TARGET'] = f1_score(self.golds['targets'], self.preds['targets'], labels=[0, 1, 2], average='macro')
         res['Avg_Cosine_Similarity'] = np.mean(self.preds['approx'])  # 'approx' key holds similarity scores
-
-        #res['composite_score'] = (
-        #        0.3 * res['F1_SA'] +
-        #        0.3 * res['F1_ESA'] +
-        #        0.3 * res['F1_ISA'] +
-        #        0.1 * res['Avg_Cosine_Similarity']
-        #)
+        #res['F1_TARGET'] = f1_score(self.golds['targets'], self.preds['targets'], labels=[0, 1, 2], average='macro')
 
         res['composite_score'] = (
                 0.7 * res['F1_SA'] + #Overall Sentiment
