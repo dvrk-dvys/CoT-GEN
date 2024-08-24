@@ -572,7 +572,8 @@ class ThorTrainer:
         def final_evaluate(self, epoch=0):
             PATH = self.save_name.format(epoch)
             print(PATH)
-            self.model.load_state_dict(torch.load(PATH, map_location=self.config.device)['model'])
+            state_dict = torch.load(PATH, map_location=self.config.device)['model']
+            self.model.load_state_dict(state_dict)
             self.model.eval()
             res = self.evaluate_step(self.test_loader, mode='test')
             self.add_instance(res)
