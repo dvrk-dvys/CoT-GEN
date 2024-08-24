@@ -366,6 +366,7 @@ class ThorTrainer:
             self.config = config
             self.train_loader, self.valid_loader, self.test_loader = train_loader, valid_loader, test_loader
             self.save_name = os.path.join(config.target_dir, config.save_name)
+            self.save_name_colab = os.path.join(config.target_dir_colab, config.save_name)
             self.final_score = 0
             self.final_res = ''
             self.start_epoch = start_epoch
@@ -397,10 +398,6 @@ class ThorTrainer:
                                save_name)
 
                     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    message = f'MODEL SAVED at {current_time}: {save_name}'
-                    print(message, flush=True)
-                    self.logger.info(message)
-                    self.model.to(self.config.device)
                     # --------- Save to Drive
                     if in_colab:
                         save_name_colab = self.save_name_colab.format(epoch)
@@ -410,7 +407,12 @@ class ThorTrainer:
                                    save_name_colab)
 
                         print('MODEL SAVED to Drive:', save_name_colab, flush=True)
-                        self.model.to(self.config.device)
+                    # --------- Save to Drive
+                    else:
+                        message = f'MODEL SAVED at {current_time}: {save_name}'
+                        print(message, flush=True)
+                        self.logger.info(message)
+                    self.model.to(self.config.device)
                     # --------- Save to Drive
 
 
