@@ -4,6 +4,8 @@ from attrdict import AttrDict
 from transformers import AutoTokenizer, T5ForConditionalGeneration
 import os
 
+from utils import prompt_for_target_inferring, prompt_for_implicitness_inferring, prompt_for_aspect_inferring, prompt_for_opinion_inferring, prompt_for_polarity_inferring
+
 
 class ISA_Infer:
     def __init__(self, config_path, model_path):
@@ -51,7 +53,7 @@ class ISA_Infer:
         with torch.no_grad():
             output = self.model.generate(input_tokens, max_length=50)
         decoded_output = self.tokenizer.decode(output[0], skip_special_tokens=True)
-        print(f"Model Output: {decoded_output}")
+        #print(f"Model Output: {decoded_output}")
 
         sentiment = decoded_output.split(', ')
         #sentiment = output_parts[0].split(': ')[1]
@@ -62,15 +64,89 @@ class ISA_Infer:
 if __name__ == '__main__':
     # Define paths
     config_path = '/Users/jordanharris/Code/THOR-GEN/config/config.yaml'
-    model_path = '/Users/jordanharris/Code/THOR-GEN/data/save/base_restaurants_0.pth.tar'
+    #model_path = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/save/base_restaurants_5.pth.tar'
+    model_path = '/Users/jordanharris/Code/Models/base_laptops_restaurants_11.pth.tar'
+    expanded_model_path = '/Users/jordanharris/Code/Models/extended_base_restaurants_laptops_12.pth.tar'
 
+
+
+#<sentences>
+#    <sentence id="2339">
+#        <text>I charge it at night and skip taking the cord with me because of the good battery life.</text>
+#        <aspectTerms>
+#            <aspectTerm term="cord" polarity="neutral" from="41" to="45" implicit_sentiment="True"/>
+#            <aspectTerm term="battery life" polarity="positive" from="74" to="86" implicit_sentiment="False" opinion_words="good"/>
+#        </aspectTerms>
+#    </sentence>
+
+
+
+
+
+
+#----------- Original
     # Print the current working directory
-    print("Current Working Directory:", os.getcwd())
+    #print("Current Working Directory:", os.getcwd())
 
-    inference = ISA_Infer(config_path, model_path)
+    #inference = ISA_Infer(config_path, model_path)
 
-    input_sentence = "The food was amazing, but the service was terrible."
+    #context = "I charge it at night and skip taking the cord with me because of the good battery life."
 
-    sentiment = inference.infer(input_sentence)
+    #new_context = f'Given the sentence "{context}", '
+    #prompt = new_context + f'what are the target aspect terms being spoken about?'
 
-    print(f"Sentiment: {sentiment}")
+
+    #target = inference.infer(prompt)
+
+    #print(f"target: {target}")
+
+    #prompt_1 = new_context + f'which specific aspect of {target} is possibly mentioned?'
+    #output_1 = inference.infer(prompt_1)
+
+    #print(f"Inferred aspect: {output_1}")
+
+    #print('----------------')
+#----------- Expanded
+    # Print the current working directory
+
+    inference = ISA_Infer(config_path, expanded_model_path)
+
+    sentence = "I charge it at night and skip taking the cord with me because of the good battery life."
+
+    #new_context = f'Given the sentence "{context}", '
+    #prompt = new_context + f'what are the target aspect terms being spoken about?'
+
+    prompt = prompt_for_target_inferring(sentence)
+    target = inference.infer(prompt)
+    print(f"inferred target: {target}")
+    print('----------------')
+
+    prompt = prompt_for_implicitness_inferring(sentence)
+    implicitness = inference.infer(prompt)
+    print(f"implicitness: {implicitness}")
+    print('----------------')
+
+    true_target_1 = 'battery life'
+    true_target_2 = 'cord'
+
+    prompt = prompt_for_aspect_inferring(sentence, true_target_1)
+    aspect = inference.infer(prompt)
+    print(f"aspect: {aspect}")
+    print('----------------')
+
+    prompt = prompt_for_opinion_inferring(sentence, true_target_1, aspect[0])
+    opinion_expression = inference.infer(prompt)
+    print(f"opinion expression: {opinion_expression}")
+    print('----------------')
+
+    opinion_word = 'good'
+
+    prompt = prompt_for_polarity_inferring(sentence, true_target_1, opinion_word)
+    sentiment_polarity = inference.infer(prompt)
+    print(f"sentiment polarity: {sentiment_polarity}")
+    print('----------------')
+
+    #prompt_1 = new_context + f'which specific opinion expression of the {target} is possibly mentioned?'
+    #output_1 = inference.infer(prompt_1)
+
+    #print(f"Inferred aspect: {output_1}")
