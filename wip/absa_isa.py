@@ -57,8 +57,8 @@ def extract_aspect_opinion_pairs(text):
 def wv_context_understanding(sentences, target):
     tokenized_sentences = [nltk.word_tokenize(sentence.lower()) for sentence in sentences]
     model = Word2Vec(sentences=tokenized_sentences, vector_size=100, window=5, min_count=1, workers=4)
-    print(model.wv.most_similar(target))
-
+    #print("Word Vector Context", model.wv.most_similar(target))
+    return model.wv.most_similar(target)
 
 def analyze_contextual_sentiment(text, aspect, window_size=5):
     words = nltk.word_tokenize(text)
@@ -125,8 +125,11 @@ def extract_aspects_lda(documents, num_topics=5, num_words=5):
     lda_model = LdaModel(corpus=corpus, id2word=dictionary, num_topics=num_topics)
 
     topics = lda_model.print_topics(num_words=num_words)
-    for topic in topics:
-        print(topic)
+
+
+    #for topic in topics:
+        #print(topic)
+    return topics
 
 
 if __name__ == '__main__':
@@ -134,10 +137,12 @@ if __name__ == '__main__':
     sia = SentimentIntensityAnalyzer()
     aspects = ['camera', 'battery']
     analyze_sentiment(text, aspects)
+    print('----------------')
+
 
     text_1 = "The restaurant's ambiance was cozy, and the food was delicious."
-    print(extract_aspect_features(text_1))
-
+    print(f"aspect features: {extract_aspect_features(text_1)}")
+    print('----------------')
 
 #    <sentence id="958:1">
 #        <text>Other than not being a fan of click pads (industry standard these days) and the lousy internal speakers, it's hard for me to find things about this notebook I don't like, especially considering the $350 price tag.</text>
@@ -151,37 +156,48 @@ if __name__ == '__main__':
 
     text_2 = "The phone's camera captures stunning details."
     text_3 ="Other than not being a fan of click pads (industry standard these days) and the lousy internal speakers, it's hard for me to find things about this notebook I don't like, especially considering the $350 price tag."
-    print(analyze_implicit_sentiment(text_2, "camera"))
-    print(analyze_implicit_sentiment(text_3, "click pads"))
-    print(analyze_implicit_sentiment(text_3, "price tag"))
+    print("implicit sentiment: ", analyze_implicit_sentiment(text_2, "camera"))
+    print("implicit sentiment: ", analyze_implicit_sentiment(text_3, "click pads"))
+    print("implicit sentiment: ", analyze_implicit_sentiment(text_3, "price tag"))
+    print('----------------')
+
 #!!!!TOKENIZER DOESNT HANDLE MULTWORD TOKENS
     sentences = ["The camera quality is amazing",
                  "The battery life is disappointing",
                  "The screen resolution is impressive"]
 
-
-    wv_context_understanding(sentences, "camera")
+    print("Word Vector context: ", wv_context_understanding(sentences, "camera"))
+    print('----------------')
 
     text_4 = 'The phone has a bright screen and a powerful processor.'
-    print(extract_aspect_opinion_pairs(text_4))
+    print("Aspect Opinion Pairs: ", extract_aspect_opinion_pairs(text_4))
+    print('----------------')
+
 
     text_5 = "Despite its small size, tthe camera produces excellent quality photos."
     print('contextual sentiment: ', analyze_contextual_sentiment(text_5, 'camera'))
+    print('----------------')
+
 
 
     text_6 = "The camera is not very good, but the screen is extremely bright."
     modified_text = handle_negations_intensifiers(text_6)
-    print(modified_text)
+    print("Handle Negations and Intensifiers: ", modified_text)
+    print('----------------')
+
 
     #sia = SentimentIntensityAnalyzer()
-    print(sia.polarity_scores(modified_text))
+    print("Polarity scores: ", sia.polarity_scores(modified_text))
+    print('----------------')
 
 
     text_7 = "The weather is just perfect today. I just love getting soaked in the rain."
     text_8 = "The new feature is so useful. It only crashed my computer twice today."
 
-    print(detect_sarcasm(text_7))
-    print(detect_sarcasm(text_8))
+    print("Detect Sarcasm", detect_sarcasm(text_7))
+    print("Detect Sarcasm", detect_sarcasm(text_8))
+    print('-------broken!---------')
+
     #BROKEN!
 
 
@@ -193,7 +209,7 @@ if __name__ == '__main__':
         "The design is sleep and modern. Feels great in hand."
     ]
 
-    extract_aspects_lda(documents)
+    print("Extract Latent Dirichlet Allocation Aspects: ", extract_aspects_lda(documents))
 
 
 

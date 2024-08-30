@@ -97,15 +97,17 @@ class NLPTextAnalyzer:
         df.to_parquet(parquet_path, index=False)
 
 
-#if __name__ == '__main__':
-#    analyzer = NLPTextAnalyzer()
-#    train_parquet_path = "./data/gen/train_dataframe.parquet"
-#    csv_output_path = "./data/gen/stanza-7226101187500723498-201.parquet.csv"
-#    parquet_output_path = "./data/gen/stanza-7226101187500723498-201.parquet"
+if __name__ == '__main__':
+    analyzer = NLPTextAnalyzer()
+    train_parquet_path = "./data/gen/train_dataframe.parquet"
+    csv_output_path = "./data/gen/stanza-7226101187500723498-201.parquet.csv"
+    parquet_output_path = "./data/gen/stanza-7226101187500723498-201.parquet"
 
 
     # Example usage for a Parquet file
-#    comments = analyzer.read_Parquet(train_parquet_path)
-#    analyzer.process_and_save(comments, csv_output_path, parquet_output_path)
-#    print()
+    comments = analyzer.read_Parquet(train_parquet_path)
+    data = analyzer.nlp_processor(comments)
+    analyzer.save(data, csv_output_path, parquet_output_path)
+    #analyzer.process_and_save(comments, csv_output_path, parquet_output_path)
+    print()
 
