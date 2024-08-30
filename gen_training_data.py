@@ -2,6 +2,8 @@ import argparse
 import math
 import pickle
 import os
+import sys
+import re
 import time
 from functools import wraps
 from collections import Counter, defaultdict
@@ -28,7 +30,10 @@ from openai import OpenAI
 import json
 from distutils.util import strtobool
 from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
+import stanza
 
+stanza.download('en')
+#doc = nlp("Barack Obama was born in Hawaii.") # run annotation over a sentence
 
 # polarity_key = {0:positive, 1:negative, 2:neutral}
 
@@ -122,6 +127,7 @@ from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, p
 # info
 # negation then counter info
 # how to rate information density?
+
 
 def runtime(func):
         @wraps(func)
@@ -236,6 +242,7 @@ class genDataset:
         ])
 
         self.input_file_path = args.raw_file_path
+        self.stanza_file_path = args.stanza_file_path
         self.output_file_path = args.out_file_path
         self.raw_text_col = args.raw_text_col
         self.out_text_col = args.out_text_col
@@ -252,6 +259,7 @@ class genDataset:
         self.model = "gpt-4o"
         #self.model = "gpt-4"
         #self.model="gpt-3.5-turbo"
+        #
     @staticmethod
     @udf(returnType=DoubleType())
     def calc_shannon_entropy(text):
@@ -286,11 +294,9 @@ class genDataset:
         tokens = corpus.lower().split()
         total_tokens = len(tokens)
 
-        # Count trigrams and bigrams
         trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
         bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
 
-        # Calculate trigram probabilities
         self.trigram_probabilities = {
             (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
             for (w1, w2, w3), count in trigram_freq_dist.items()
@@ -300,11 +306,9 @@ class genDataset:
         tokens = corpus.lower().split()
         total_tokens = len(tokens)
 
-        # Count trigrams and bigrams
         trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
         bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
 
-        # Calculate trigram probabilities
         trigram_probabilities = {
             (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
             for (w1, w2, w3), count in trigram_freq_dist.items()
@@ -395,8 +399,12 @@ class genDataset:
             # .limit(self.batch_size)
         )
         base_df.show()
-
-        #####################
+        #Stanza stuff        #####################
+        #stanza_df = self.spark_session.read.parquet(self.stanza_file_path)
+        #joined_df = base_df.join(stanza_df, base_df[raw_text_column] == stanza_df['sentence'], "left_outer")
+        #base_df = joined_df.drop(stanza_df['sentence'])
+        #base_df.show()
+        #Stanza stuff #####################
 
         corpus = base_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
         self.comment_corpus = " ".join(corpus)
@@ -484,7 +492,6 @@ class genDataset:
         return self.remaining_df, raw_input_array
 
     def extract_spaCy_features(self, doc):
-        # Initialize dictionary to collect multiple items
         artifacts = {
             'tokens': [],
             'POS_tags': [],
@@ -492,7 +499,6 @@ class genDataset:
             'negations': []
         }
 
-        # Collect token attributes
         for token in doc:
             artifacts['tokens'].append(token.text)
             artifacts['POS_tags'].append(token.pos_)
@@ -501,18 +507,15 @@ class genDataset:
             # artifacts['heads'].append(token.head.text)
             if token.dep_ == 'neg':
                 artifacts['negations'].append(token.head.text)
-        # Collect entity information
         # for ent in doc.ents:
         #     artifacts['entities'].append(ent.text)
         #     artifacts['labels'].append(ent.label_)
         # #
-        # Collect sentences
         # for span in doc.sents:
         #     artifacts['sentences'].append(span.text)
         return artifacts
 
     def batch_preprocess_text(self, input_texts):
-        # Initialize dictionary to hold features of all documents
         self.spaCy_features = {
             'tokens': [],
             'POS_tags': [],
@@ -520,7 +523,6 @@ class genDataset:
             'negations': []
         }
 
-        # Process documents in batch for efficiency
         for doc in self.nlp.pipe(input_texts):
             features = self.extract_spaCy_features(doc)
             self.spaCy_features['tokens'].append(features['tokens'])
@@ -528,39 +530,33 @@ class genDataset:
             self.spaCy_features['dependencies'].append(features['dependencies'])
             self.spaCy_features['negations'].append(features['negations'])
 
-        # Optionally print or return the extracted features
+
         # print("spaCy features extracted:", self.spaCy_features)
         # return self.spaCy_features
 
-    def extract_spaCy_features(self, doc):
-         # Initialize dictionary with lists for collecting multiple items
-         artifacts = [[],[],[],[]]
+    #def extract_spaCy_features(self, doc):
+    #     artifacts = [[],[],[],[]]
 
-    #     # Collect token attributes
-         for token in doc:
-             artifacts[0].append(token.text)  # Append each token's text to the list
-             # artifacts['lemmas'].append(token.lemma_)
-             artifacts[1].append(token.pos_)
-             artifacts[2].append(token.dep_)
-             # artifacts['heads'].append(token.head.text)
+    #     for token in doc:
+    #         artifacts[0].append(token.text)  # Append each token's text to the list
+    #         # artifacts['lemmas'].append(token.lemma_)
+    #         artifacts[1].append(token.pos_)
+    #         artifacts[2].append(token.dep_)
+    #         # artifacts['heads'].append(token.head.text)
 
-         # Collect entity information
          # for ent in doc.ents:
          #     artifacts['entities'].append(ent.text)
          #     artifacts['labels'].append(ent.label_)
          #
-         # # Collect sentences
          # for span in doc.sents:
          #     artifacts['sentences'].append(span.text)
 
-             # Check if the token is a negation modifier
-             if token.dep_ == 'neg':
-                 artifacts[3].append(token.head.text)
+    #         if token.dep_ == 'neg':
+    #             artifacts[3].append(token.head.text)
 
-         return artifacts
+    #     return artifacts
 
     # def batch_preprocess_text(self, input_texts):
-    #     # Initialize the list to hold features of all documents
     #     # self.spaCy_features = []
     #
     #     self.spaCy_features = {
@@ -583,7 +579,6 @@ class genDataset:
     #         # 'categories': doc.cats  # Capture categories if available (often empty without training)
     #     }
     #
-    #     # Process documents in batch for efficiency
     #     for doc in self.nlp.pipe(input_texts):
     #         a = self.extract_spaCy_features(doc)
     #         self.spaCy_features['tokens'].append(a[0])  # Append each token's text to the list
@@ -592,29 +587,26 @@ class genDataset:
     #         a['dependencies'].append(a[2])
     #         # artifacts['heads'].append(token.head.text)
     #
-    #         # Collect entity information
     #         # for ent in doc.ents:
     #         #     artifacts['entities'].append(ent.text)
     #         #     artifacts['labels'].append(ent.label_)
     #         #
-    #         # # Collect sentences
     #         # for span in doc.sents:
     #         #     artifacts['sentences'].append(span.text)
     #
-    #         # Check if the token is a negation modifier
     #         a['negations'].append(a[3])
-    #
     #
     #         # features = self.extract_spaCy_features(doc)
     #         # self.spaCy_features.append(features)
     #
-    #     # Optionally print or return the extracted features
     #     # return self.spaCy_features
 
     def extract_negations(self, text):
         print()
 
     def preprocess_text(self, text):
+        nlp = stanza.Pipeline('en')
+        doc = nlp("Barack Obama was born in Hawaii.")  # run annotation over a sentence
         print()
 
     """
@@ -651,7 +643,22 @@ class genDataset:
             )
         ]
 
-        token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', 'spaCy_tokens', 'POS_tags', 'dependencies', 'negations', self.raw_text_col])
+        schema = StructType([
+            StructField('input_ids', ArrayType(IntegerType()), nullable=False),
+            StructField('token_type_ids', ArrayType(IntegerType()), nullable=False),
+            StructField('attention_mask', ArrayType(IntegerType()), nullable=False),
+            StructField('spaCy_tokens', ArrayType(StringType()), nullable=True),
+            StructField('POS_tags', ArrayType(StringType()), nullable=True),
+            StructField('dependencies', ArrayType(StringType()), nullable=True),
+            StructField('negations', ArrayType(StringType()), nullable=True),  # Define this explicitly, even if empty
+            StructField(self.raw_text_col, StringType(), nullable=True),
+        ])
+
+        try:
+            token_nest_df = self.spark_session.createDataFrame(zip_data, schema)
+            #token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', 'spaCy_tokens', 'POS_tags', 'dependencies', 'negations', self.raw_text_col])
+        except:
+            print()
         token_nest_df.show()
         batch_df.show()
         batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left").orderBy('index')
@@ -701,14 +708,16 @@ class genDataset:
             ]
         )
         response = completion.choices[0].message.content
-        try:
-            response = json.loads(response)
-        except:
-            print()
+        cleaned_response = re.search(r"\[.*\]$", response, re.DOTALL)
+        cleaned_response = re.sub(r"(?<!\\)'", '"', cleaned_response.string)
+        response = json.loads(cleaned_response)
+        #response = json.loads(response)
         print(response)
         assert isinstance(response, list), f"{self.model} output is read to list"
         assert isinstance(response[0], dict), f"{self.model} output is read to list"
+        #!!if response is not None:
         return response
+
 
     def generate_aspect_mask(self, sentence_tokens, aspect_tokenized):
         try:
@@ -791,6 +800,7 @@ class genDataset:
         prompt = new_context + f'determine the polarity (positive, negative or neutral) of aspect term and if it is explicitly or implicitly expressed with respect to the whole sentence?'
         role = (
             "You are operating as a system that, given a list of sentence, spaCy NLP features & aspect terms, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence."
+            "Ensure the output contains only this JSON array and no additional leading or trailing text on the formatted json array."
             "When considering each sentence also assess all of the nlp spaCy features at the corresponding index."
             "The NLP features you will be looking at are the TOKENS, POS TAGS, DEPENDENCIES and NEGATIONS if applicable"
             "Polarity is either positive (0), negative (1) or neutral (2). Then, determine if the expression is implicit or explicit (True or False)."
@@ -798,8 +808,9 @@ class genDataset:
             "Each entry represents an input sentence-feature-aspect set, indexed accordingly."
             "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...]"
             "Be sure to assess every single aspect term and that the length of your output is EXACTLY THE SAME as the length as the INPUT."
-            "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters."
-            "Ensure the output contains only this JSON array and no additional text.")
+            "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters. Do not add the word 'json' before you give the output"
+            #"Ensure the output contains only this JSON array and no additional leading or trailing text on the formatted json array."
+        )
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
         try:
             assert len(self.polarity_implicitness) == len(aspects)
@@ -809,8 +820,10 @@ class genDataset:
 
     def transform_df(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask, polarity_implicitness):
         # aspect_terms = [i['aspectTerm'] for i in aspect]
-
-        implicitness = [self.safe_strtobool(i['implicitness']) for i in polarity_implicitness]
+        try:
+            implicitness = [self.safe_strtobool(i['implicitness']) for i in polarity_implicitness]
+        except:
+            print()
         polarity = [i['polarity'] for i in polarity_implicitness]
 
         rows = [
@@ -915,7 +928,6 @@ class genDataset:
             self.batch_generate_aspect_masks(input_ids, self.index)
             batch_spaCy_features = [spaCy_tokens, POS_tags, dependencies, negations]
             self.batch_extract_polarity_implicitness(raw_batch_array, batch_spaCy_features, self.aspects)
-
             self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask, self.aspects, self.aspect_masks, self.polarity_implicitness)
             # ------------------------------------------
             self.write_parquet_file(self.processed_batch_df, self.output_file_path)
@@ -929,14 +941,23 @@ class genDataset:
             print('All data already processed. Terminating.')
 
 if __name__ == '__main__':
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY is not set in the environment.")
+
+
     raw_file_path = './data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
+    #stanza_path = "./data/gen/stanza-7226101187500723498-201.parquet"
     out_parquet_path = "data/gen/train_dataframe.parquet"
     out_pkl_path = './data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
+
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='./config/genconfig.yaml', help='config file')
     # parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/raw/raw_dev.csv')
     parser.add_argument('-r', '--raw_file_path', default=raw_file_path)
+    parser.add_argument('-s', '--stanza_file_path', default='') #stanza_path)
+
     parser.add_argument('-r_col', '--raw_text_col', default='Comment')
     parser.add_argument('-o', '--out_file_path', default=out_parquet_path)
     parser.add_argument('-o_col', '--out_text_col', default='raw_text')
