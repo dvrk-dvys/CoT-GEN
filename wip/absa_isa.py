@@ -5,13 +5,11 @@ import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
 from nltk.corpus import stopwords
 #nltk.download('vader_lexicon')
-import spacy
 nltk.download('punkt_tab')
 nltk.download('stopwords')
 
+import spacy
 nlp = spacy.load("en_core_web_lg")
-
-
 
 
 

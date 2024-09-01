@@ -6,33 +6,28 @@ import sys
 import re
 import time
 from functools import wraps
-from collections import Counter, defaultdict
-
 import yaml
 import numpy as np
-from collections import Counter
-from attrdict import AttrDict
-
-import transformers
-from transformers import TFRobertaModel
-from transformers import AutoTokenizer
 import pandas as pd
-import spacy
+from collections import Counter, defaultdict
+from attrdict import AttrDict
+import json
 
+from transformers import TFRobertaModel, AutoTokenizer
 
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import Row
 from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
-from pyspark.sql.functions import lit, udf, monotonically_increasing_id
+from pyspark.sql.functions import lit, udf, monotonically_increasing_id, pandas_udf, PandasUDFType
 from pyspark.sql.functions import unix_timestamp, from_unixtime
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, LongType, DoubleType
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, \
+    LongType, DoubleType
 from openai import OpenAI
-import json
 from distutils.util import strtobool
 from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
-import stanza
+from src.preprocess_utils import NLPTextAnalyzer, parse_arguments
 
-stanza.download('en')
+
 #doc = nlp("Barack Obama was born in Hawaii.") # run annotation over a sentence
 
 # polarity_key = {0:positive, 1:negative, 2:neutral}
@@ -130,15 +125,17 @@ stanza.download('en')
 
 
 def runtime(func):
-        @wraps(func)
-        def runtime_wrapper(*args, **kwargs):
-            start_time = time.perf_counter()
-            result = func(*args, **kwargs)
-            end_time = time.perf_counter()
-            total_time = end_time - start_time
-            print(f'Function {func.__name__}{args} {kwargs} Took {total_time:.4f} seconds')
-            return result
-        return runtime_wrapper
+    @wraps(func)
+    def runtime_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        result = func(*args, **kwargs)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        print(f'Function {func.__name__}{args} {kwargs} Took {total_time:.4f} seconds')
+        return result
+
+    return runtime_wrapper
+
 
 def rest_after_run(sleep_seconds=5):
     def decorator(func):
@@ -148,8 +145,11 @@ def rest_after_run(sleep_seconds=5):
             time.sleep(sleep_seconds)
             print("Starting.")
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator
+
 
 def json_error_handler(max_retries=3, delay_seconds=8, spec=''):
     def decorator(func):
@@ -169,13 +169,17 @@ def json_error_handler(max_retries=3, delay_seconds=8, spec=''):
                         break
             # return none?
             # return None
+
         return wrapper
+
     return decorator
 
 
 class genDataset:
-    def __init__(self, args):
+    def __init__(self, args, pre_nlp):
         # cwd = os.getcwd()
+
+        self.pre_nlp = pre_nlp
         config = AttrDict(yaml.load(open(args.config, 'r', encoding='utf-8'), Loader=yaml.FullLoader))
         for k, v in vars(args).items():
             setattr(config, k, v)
@@ -183,14 +187,10 @@ class genDataset:
         self.config['openai_token'] = os.getenv("OPENAI_API_KEY")
 
         self.tokenizer = AutoTokenizer.from_pretrained(config.bert_model_path)
-        self.nlp = spacy.load(config.spacy_model_path)
-
         self.spark_session = (SparkSession.builder
                               .master("local[*]")
                               .appName("TiktokComments")
                               .getOrCreate())
-        #self.entropy_udf = udf(lambda text: calculate_shannon_entropy(text), DoubleType())
-        #self.entropy_udf = udf(entropy_udf, DoubleType())
 
         self.csv_schema = StructType([
             StructField("Comment ID", StringType(), True),
@@ -254,12 +254,9 @@ class genDataset:
 
         self.trigram_probabilities = {}
 
-
         self.base_df, self.raw_input_array = self.initialize_df(self.raw_text_col, self.out_text_col)
         self.model = "gpt-4o"
-        #self.model = "gpt-4"
-        #self.model="gpt-3.5-turbo"
-        #
+
     @staticmethod
     @udf(returnType=DoubleType())
     def calc_shannon_entropy(text):
@@ -341,14 +338,14 @@ class genDataset:
         perplexity = 2 ** (-avg_log_prob)
         return perplexity
 
-   #def calculate_tree_prob_dist(self, tree_comments):
-   #     tokens = " ".join(tree_comments).lower().split()
-   #     total_tokens = len(tokens)
-   #     freq_dist = Counter(tokens)
-   #     prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
-   #     bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
-   #     joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
-   #     return prob_dist, joint_prob_dist
+    #def calculate_tree_prob_dist(self, tree_comments):
+    #     tokens = " ".join(tree_comments).lower().split()
+    #     total_tokens = len(tokens)
+    #     freq_dist = Counter(tokens)
+    #     prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
+    #     bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
+    #     joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
+    #     return prob_dist, joint_prob_dist
 
     def contextual_MI_Score(self, text, prob_dist, joint_prob_dist):
         tokens = text.lower().split()
@@ -380,9 +377,11 @@ class genDataset:
                 mi_score = self.contextual_MI_Score(comment, prob_dist, joint_prob_dist)
                 surprisal_score = self.contextual_surprisal(comment, contextual_trigram_probabilities)
                 perplexity_score = self.contextual_perplexity(comment, contextual_trigram_probabilities)
-                scores.append((comment_row["Comment ID"], float(mi_score), float(surprisal_score), float(perplexity_score)))
+                scores.append(
+                    (comment_row["Comment ID"], float(mi_score), float(surprisal_score), float(perplexity_score)))
 
-        scores_df = self.spark_session.createDataFrame(scores, ["Comment ID", "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity"])
+        scores_df = self.spark_session.createDataFrame(scores, ["Comment ID", "contextual_mutual_information_score",
+                                                                "contextual_surprisal", "contextual_perplexity"])
         df = df.join(scores_df, on="Comment ID", how="left")
         return df
 
@@ -446,8 +445,8 @@ class genDataset:
 
             return sum(surprisals) / len(surprisals) if surprisals else 0.0
 
-
         base_df = base_df.withColumn("surprisal", surprisal_udf(col("Comment")))
+
         @udf(returnType=DoubleType())
         def perplexity_udf(text):
             trigram_probabilities = trigram_probabilities_broadcast.value
@@ -469,10 +468,9 @@ class genDataset:
         base_df = self.construct_contextual_scores(base_df)
         base_df.show()
 
-
-
         # base_df = base_df.withColumn("Comment Time", col("Comment Time").cast("timestamp"))
-        base_df = base_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
+        base_df = base_df.withColumn("Comment Time",
+                                     from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
         base_df.show(self.batch_size)
 
         # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
@@ -491,135 +489,18 @@ class genDataset:
         print(self.remaining_df.count(), ' Rows remaining')
         return self.remaining_df, raw_input_array
 
-    def extract_spaCy_features(self, doc):
-        artifacts = {
-            'tokens': [],
-            'POS_tags': [],
-            'dependencies': [],
-            'negations': []
-        }
-
-        for token in doc:
-            artifacts['tokens'].append(token.text)
-            artifacts['POS_tags'].append(token.pos_)
-            artifacts['dependencies'].append(token.dep_)
-            # artifacts['lemmas'].append(token.lemma_)
-            # artifacts['heads'].append(token.head.text)
-            if token.dep_ == 'neg':
-                artifacts['negations'].append(token.head.text)
-        # for ent in doc.ents:
-        #     artifacts['entities'].append(ent.text)
-        #     artifacts['labels'].append(ent.label_)
-        # #
-        # for span in doc.sents:
-        #     artifacts['sentences'].append(span.text)
-        return artifacts
-
-    def batch_preprocess_text(self, input_texts):
-        self.spaCy_features = {
-            'tokens': [],
-            'POS_tags': [],
-            'dependencies': [],
-            'negations': []
-        }
-
-        for doc in self.nlp.pipe(input_texts):
-            features = self.extract_spaCy_features(doc)
-            self.spaCy_features['tokens'].append(features['tokens'])
-            self.spaCy_features['POS_tags'].append(features['POS_tags'])
-            self.spaCy_features['dependencies'].append(features['dependencies'])
-            self.spaCy_features['negations'].append(features['negations'])
-
-
-        # print("spaCy features extracted:", self.spaCy_features)
-        # return self.spaCy_features
-
-    #def extract_spaCy_features(self, doc):
-    #     artifacts = [[],[],[],[]]
-
-    #     for token in doc:
-    #         artifacts[0].append(token.text)  # Append each token's text to the list
-    #         # artifacts['lemmas'].append(token.lemma_)
-    #         artifacts[1].append(token.pos_)
-    #         artifacts[2].append(token.dep_)
-    #         # artifacts['heads'].append(token.head.text)
-
-         # for ent in doc.ents:
-         #     artifacts['entities'].append(ent.text)
-         #     artifacts['labels'].append(ent.label_)
-         #
-         # for span in doc.sents:
-         #     artifacts['sentences'].append(span.text)
-
-    #         if token.dep_ == 'neg':
-    #             artifacts[3].append(token.head.text)
-
-    #     return artifacts
-
-    # def batch_preprocess_text(self, input_texts):
-    #     # self.spaCy_features = []
-    #
-    #     self.spaCy_features = {
-    #         'tokens': [],
-    #         # The base form of each word, useful for normalizing text to reduce word form variation and improve matching and retrieval tasks.
-    #         # 'lemmas': [],
-    #         # Part-of-speech tags for each word, critical for understanding grammatical structure and roles, aiding in parsing and informing syntactic analysis.
-    #         'POS_tags': [],
-    #         # Dependency relations between tokens, essential for understanding syntactic structure of sentences, which is pivotal in tasks that require deep comprehension of sentence construction.
-    #         'dependencies': [],
-    #         # The syntactic head of each token, indicating the token that governs or controls the token in syntax, crucial for parsing tree construction and understanding hierarchical syntax relationships.
-    #         # 'heads': [],
-    #         # # Named entities extracted from text, such as names of people, organizations, locations, etc., key for information extraction and knowledge graph construction.
-    #         # 'entities': [],
-    #         # # Labels associated with the named entities, indicating the category of each entity (e.g., person, location, organization), useful for classifying and differentiating types of information in text.
-    #         # 'labels': [],
-    #         # #  Individual sentences segmented from the text, fundamental for tasks that operate on or analyze data at the sentence level, such as summarization or sentiment analysis.
-    #         # 'sentences': [],
-    #         'negations': []
-    #         # 'categories': doc.cats  # Capture categories if available (often empty without training)
-    #     }
-    #
-    #     for doc in self.nlp.pipe(input_texts):
-    #         a = self.extract_spaCy_features(doc)
-    #         self.spaCy_features['tokens'].append(a[0])  # Append each token's text to the list
-    #         # artifacts['lemmas'].append(token.lemma_)
-    #         a['POS_tags'].append(a[1])
-    #         a['dependencies'].append(a[2])
-    #         # artifacts['heads'].append(token.head.text)
-    #
-    #         # for ent in doc.ents:
-    #         #     artifacts['entities'].append(ent.text)
-    #         #     artifacts['labels'].append(ent.label_)
-    #         #
-    #         # for span in doc.sents:
-    #         #     artifacts['sentences'].append(span.text)
-    #
-    #         a['negations'].append(a[3])
-    #
-    #         # features = self.extract_spaCy_features(doc)
-    #         # self.spaCy_features.append(features)
-    #
-    #     # return self.spaCy_features
-
-    def extract_negations(self, text):
-        print()
-
-    def preprocess_text(self, text):
-        nlp = stanza.Pipeline('en')
-        doc = nlp("Barack Obama was born in Hawaii.")  # run annotation over a sentence
-        print()
-
     """
     The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
     1: BERT (Bidirectional Encoder Representations from Transformers) is designed to understand the context of words in a sentence by considering the words that come before and after the target word. It's primarily used for tasks like Named Entity Recognition (NER), sentiment analysis, and question answering.
     2: T5 (Text-to-Text Transfer Transformer) takes a different approach by treating every NLP problem as a text-to-text problem, meaning it converts all NLP tasks into a text-to-text format. This model is versatile and can be used for a variety of tasks, such as translation, summarization, question answering, and more.
     """
+
     def extract_text_tokens(self, input_array):
         # # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
         # self.raw_input_array = id_text_token_df.select("raw_texts").rdd.flatMap(lambda x: x).collect()
         # test = self.tokenizer.encode_plus(input_array[0])
         batch_encoded = self.tokenizer.batch_encode_plus(input_array,
-                                                        # self.raw_input_array,
+                                                         # self.raw_input_array,
                                                          padding=True,
                                                          max_length=self.config.max_length,
                                                          return_tensors=None)
@@ -627,18 +508,32 @@ class genDataset:
         self.bert_tokens = batch_encoded
         return self.bert_tokens
 
+    def convert_lda_aspects(self, lda_aspects):
+        # Convert LDA aspects to a JSON string or a formatted string list
+        return [json.dumps(aspect) if isinstance(aspect, list) else str(aspect) for aspect in lda_aspects]
 
     def prep_token_flatten(self, batch_df, raw_batch_array):
+        lda_aspects_formatted = self.pre_nlp['LDA_aspect_prob'].apply(self.convert_lda_aspects)
+
         zip_data = [
-            (input_ids, token_type_ids, attention_mask, spaCy_tokens, POS_tags, dependencies, negations, raw_input)
-            for input_ids, token_type_ids, attention_mask, spaCy_tokens, POS_tags, dependencies, negations, raw_input in zip(
+            (input_ids, token_type_ids, attention_mask, spaCy_tokens, POS, POS_tags, entities, heads, labels,
+             dependencies, negations, LDA_aspect_prob, raw_input)
+            for input_ids, token_type_ids, attention_mask, spaCy_tokens, POS, POS_tags, entities, heads,  labels,
+            dependencies, negations, LDA_aspect_prob, raw_input in
+            zip(
                 self.bert_tokens.data['input_ids'],
                 self.bert_tokens.data['token_type_ids'],
                 self.bert_tokens.data['attention_mask'],
-                self.spaCy_features['tokens'],
-                self.spaCy_features['POS_tags'],
-                self.spaCy_features['dependencies'],
-                self.spaCy_features['negations'],
+                self.pre_nlp['tokens'],
+                self.pre_nlp['POS'],
+                self.pre_nlp['POS_tags'],
+                self.pre_nlp['entities'],
+                self.pre_nlp['heads'],
+                self.pre_nlp['labels'],
+                self.pre_nlp['dependencies'],
+                self.pre_nlp['negations'],
+                #self.pre_nlp['LDA_aspects'],
+                lda_aspects_formatted,
                 raw_batch_array
             )
         ]
@@ -648,17 +543,20 @@ class genDataset:
             StructField('token_type_ids', ArrayType(IntegerType()), nullable=False),
             StructField('attention_mask', ArrayType(IntegerType()), nullable=False),
             StructField('spaCy_tokens', ArrayType(StringType()), nullable=True),
+            StructField('POS', ArrayType(StringType()), nullable=True),
             StructField('POS_tags', ArrayType(StringType()), nullable=True),
+            StructField('entities', ArrayType(StringType()), nullable=True),
+            StructField('heads', ArrayType(StringType()), nullable=True),
+            StructField('labels', ArrayType(StringType()), nullable=True),
             StructField('dependencies', ArrayType(StringType()), nullable=True),
-            StructField('negations', ArrayType(StringType()), nullable=True),  # Define this explicitly, even if empty
+            StructField('negations', ArrayType(StringType()), nullable=True),# Define this explicitly, even if empty
+            StructField('LDA_aspect_prob', ArrayType(StringType()), nullable=True),
             StructField(self.raw_text_col, StringType(), nullable=True),
         ])
 
-        try:
-            token_nest_df = self.spark_session.createDataFrame(zip_data, schema)
-            #token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', 'spaCy_tokens', 'POS_tags', 'dependencies', 'negations', self.raw_text_col])
-        except:
-            print()
+        token_nest_df = self.spark_session.createDataFrame(zip_data, schema)
+        #token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', 'spaCy_tokens', 'POS_tags', 'dependencies', 'negations', self.raw_text_col])
+
         token_nest_df.show()
         batch_df.show()
         batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left").orderBy('index')
@@ -693,7 +591,7 @@ class genDataset:
         assert flat_df.count() == len(flat_list)
         return flat_list, flat_df
 
-    @json_error_handler(max_retries=3, delay_seconds=2, spec='Base GPT Prompt')
+    @json_error_handler(max_retries=5, delay_seconds=2, spec='Base GPT Prompt')
     @rest_after_run(sleep_seconds=2)
     def prompt_gpt(self, role, prompt):
         """
@@ -707,17 +605,24 @@ class genDataset:
                 {"role": "user", "content": prompt}
             ]
         )
-        response = completion.choices[0].message.content
-        cleaned_response = re.search(r"\[.*\]$", response, re.DOTALL)
-        cleaned_response = re.sub(r"(?<!\\)'", '"', cleaned_response.string)
-        response = json.loads(cleaned_response)
+        try:
+            response = completion.choices[0].message.content
+            cleaned_response = re.search(r"\[.*\]$", response, re.DOTALL)
+            if cleaned_response is None:
+                raise ValueError("Could not extract JSON array from the response. Response: " + response)
+            cleaned_response = re.sub(r"(?<!\\)'", '"', cleaned_response.string)
+            response = json.loads(cleaned_response)
+        except (json.JSONDecodeError, AssertionError) as e:
+            print("Error parsing JSON:", str(e))
+            print("Cleaned Response:", cleaned_response)  # Debug the problematic content
+            return None
+
         #response = json.loads(response)
         print(response)
         assert isinstance(response, list), f"{self.model} output is read to list"
         assert isinstance(response[0], dict), f"{self.model} output is read to list"
         #!!if response is not None:
         return response
-
 
     def generate_aspect_mask(self, sentence_tokens, aspect_tokenized):
         try:
@@ -736,7 +641,8 @@ class genDataset:
         for i, a in enumerate(self.aspects):
             encoded_aspect_token = self.tokenizer.encode(a, add_special_tokens=False)
             local_index = index[i] % self.batch_size
-            self.aspect_masks.append(self.generate_aspect_mask(self.bert_tokens.data['input_ids'][local_index], encoded_aspect_token))
+            self.aspect_masks.append(
+                self.generate_aspect_mask(self.bert_tokens.data['input_ids'][local_index], encoded_aspect_token))
         return self.aspect_masks
 
     def safe_strtobool(self, value):
@@ -755,31 +661,61 @@ class genDataset:
         self.tokenizer.tokenize(self.aspects)
         return self.aspects
 
+    def nlp_batch_for_aspects(self, batch_input, feature_set):
+        matching_features = self.pre_nlp[self.pre_nlp['comments'].isin(batch_input)]
+        pre_nlp_features = matching_features[feature_set]
+        pre_nlp_features_list = pre_nlp_features.to_dict(
+            orient='records')
+        #pre_nlp_features_str = json.dumps(pre_nlp_features_list, ensure_ascii=False)
+        assert len(batch_input) == len(pre_nlp_features_list), "The input arrays must have the same length."
+        formatted_prompt = ""
+        for index, (sentence, features) in enumerate(zip(batch_input, pre_nlp_features_list)):
+            formatted_prompt += f"Input sentence {index}: {sentence}\n"
+            formatted_prompt += f"Corresponding NLP features {index}: {features}\n\n"
+        return formatted_prompt
+
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Aspects')
     @rest_after_run(sleep_seconds=4)
-
-    def batch_extract_aspects(self, batch_input_array, batch_spaCy_features):
-
-        new_context = f'Given these sentences "{batch_input_array}" and these spaCy NLP features "{batch_spaCy_features}", '
+    def batch_extract_aspects(self, nlp_batch, feature_set, max_aspects):
+        new_context = f'Given these sentences and NLP features "{nlp_batch}", '
         prompt = new_context + f'which words or phrases are the aspect terms?'
         role = (
-            "You are a system that identifies the core word(s) or phrase(s) in a list of sentences, which represent the aspect or target term(s). "
-            "When considering each sentence also assess all of the nlp spaCy features at the corresponding index."
-            "The NLP features you will be looking at are the TOKENS, POS TAGS, DEPENDENCIES and NEGATIONS if applicable"
+            f'You are a system that identifies the core word(s) or phrase(s) in a list of sentences, which represent the aspect or target term(s). The max number aspect term to select per sentence is "{max_aspects}"'
+            "When considering each sentence also assess all of the preprocessed nlp features at the corresponding index."
+            f'The NLP features you will be looking at are the "{feature_set}" if applicable.'
+            "LDA (Latent Dirichlet Allocation) aspects are the key topics or themes identified within a document, represented as a distribution of words with associated probabilities, which indicate how relevant each word is to a particular topic."
             "Return the results as a JSON array with proper formatting, where each entry is a JSON object with one key:'aspectTerm'."
-            "If a sentence contains more than one aspect term, list them together as the value for 'aspectTerm'. For example, [{'aspectTerm': 'term0'}, {'aspectTerm': ['term0', 'term1', 'term2']}, ...]."
+            f'IFF the "{max_aspects}" > 1 AND a sentence contains more than one aspect term, list them together as the value for the "aspectTerm"'
+            "For example, [{'aspectTerm': 'term0'}, {'aspectTerm': ['term0', 'term1']}, ...].'"
             "If not significant aspect term is found have the value be 'NONE'. Each aspect object corresponds to the input sentence, indexed accordingly."
             "Finally check your output for trailing commas, missing or extra brackets, correct quotation marks, and special characters."
             "Ensure the output contains only this JSON array and no additional text."
         )
         self.aspects = self.prompt_gpt(role, prompt)
         try:
-            assert len(self.aspects) == len(batch_input_array)
+            assert len(self.aspects) == self.batch_size
         except:
             print()
-        #assert len(self.aspects) == len(batch_input_array)
-        return self.aspects  #, self.aspect_masks
+        return self.aspects
 
+    def nlp_batch_for_implicitness(self, batch_input, feature_set, aspect_terms):
+        assert len(batch_input) == len(feature_set[0]) == len(aspect_terms), "The input arrays must have the same length."
+
+        formatted_prompt = ""
+        for index, (sentence, aspects) in enumerate(zip(batch_input, aspect_terms)):
+
+            combined_features = {
+                "tokens": feature_set[0][index],
+                "POS": feature_set[1][index],
+                "POS_tags": feature_set[2][index],
+                "heads": feature_set[3][index],
+                "dependencies": feature_set[4][index],
+                "negations": feature_set[5][index],
+            }
+            formatted_prompt += f"Input sentence {index}: {sentence}\n"
+            formatted_prompt += f"Corresponding NLP features {index}: {combined_features}\n\n"
+            formatted_prompt += f"Corresponding Aspect Terms {index}: {aspects}\n\n"
+        return formatted_prompt
     def extract_polarity_implicitness(self, aspects):
         new_context = f'Given the sentence "{self.raw_input_array}", and this/these aspect term(s),"{aspects}'
         prompt = new_context + f'determine the polairty (positive, negative or neutral) of aspect term and if it is explicitely or implicitely expressed with respect to the whole sentence?'
@@ -794,31 +730,33 @@ class genDataset:
 
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Polarity & Implicits')
     @rest_after_run(sleep_seconds=4)
-    def batch_extract_polarity_implicitness(self, batch_input_array, batch_spaCy_features, aspects):
-        new_context = f'Given these sentences "{batch_input_array}", spaCy NLP features "{batch_spaCy_features} and corresponding aspect terms "{aspects}" with input length: {len(aspects)}, '
+    def batch_extract_polarity_implicitness(self, nlp_batch, feature_set):
+        new_context = f'Given these sentences, NLP features and key aspect terms "{nlp_batch}", with input length: {len(self.aspects)}, '
         # new_context = f'Given this list of lists of sentences, spaCy NLP features and corresponding aspect terms "{zipped_data}" of  length: {self.batch_size}, '
         prompt = new_context + f'determine the polarity (positive, negative or neutral) of aspect term and if it is explicitly or implicitly expressed with respect to the whole sentence?'
         role = (
-            "You are operating as a system that, given a list of sentence, spaCy NLP features & aspect terms, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence."
-            "Ensure the output contains only this JSON array and no additional leading or trailing text on the formatted json array."
-            "When considering each sentence also assess all of the nlp spaCy features at the corresponding index."
-            "The NLP features you will be looking at are the TOKENS, POS TAGS, DEPENDENCIES and NEGATIONS if applicable"
-            "Polarity is either positive (0), negative (1) or neutral (2). Then, determine if the expression is implicit or explicit (True or False)."
-            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'."
-            "Each entry represents an input sentence-feature-aspect set, indexed accordingly."
-            "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...]"
-            "Be sure to assess every single aspect term and that the length of your output is EXACTLY THE SAME as the length as the INPUT."
-            "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters. Do not add the word 'json' before you give the output"
+            "You are operating as a system that, given a list of sentence, spaCy NLP features & aspect terms, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence. "
+            "Ensure the output contains only this JSON array and no additional leading or trailing text on the formatted json array. "
+            "When considering each sentence also assess all of the nlp spaCy features at the corresponding index. "
+            f'The NLP features you will be looking at are the "{feature_set}" if applicable. '
+            "In dependency parsing, 'heads' refer to the main words (or roots) of phrases that other words depend on, while 'dependencies' describe the grammatical relationships between these dependent words and their heads, such as subjects, objects, and modifiers. "
+            "Polarity is either positive (0), negative (1) or neutral (2). Then, determine if the expression is implicit or explicit (True or False). "
+            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'. "
+            "Each entry represents an input sentence-feature-aspect set, indexed accordingly. "
+            "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...] "
+            "Be sure to assess every single aspect term and that the length of your output is EXACTLY THE SAME as the length as the INPUT. "
+            "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters. Do not add the word 'json' before you give the output "
             #"Ensure the output contains only this JSON array and no additional leading or trailing text on the formatted json array."
         )
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
         try:
-            assert len(self.polarity_implicitness) == len(aspects)
+            assert len(self.polarity_implicitness) == len(self.aspects)
         except:
             print()
         return self.polarity_implicitness
 
-    def transform_df(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask, polarity_implicitness):
+    def transform_df(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask,
+                     polarity_implicitness):
         # aspect_terms = [i['aspectTerm'] for i in aspect]
         try:
             implicitness = [self.safe_strtobool(i['implicitness']) for i in polarity_implicitness]
@@ -866,14 +804,15 @@ class genDataset:
         result_df.printSchema()
         try:
             train_df = result_df.select(col('raw_text').alias('raw_texts'),
-                                         col('aspect').alias('raw_aspect_terms'),
-                                         col('token_ids').alias('bert_tokens'),
-                                         col('aspect_mask').alias('aspect_masks'),
-                                         col('implicitness').alias('implicits'),
-                                         col('polarity').alias('labels')
+                                        col('aspect').alias('raw_aspect_terms'),
+                                        col('token_ids').alias('bert_tokens'),
+                                        col('aspect_mask').alias('aspect_masks'),
+                                        col('implicitness').alias('implicits'),
+                                        col('polarity').alias('labels')
                                         # col('token_type_ids').alias('token_type_ids'),
                                         # col('attention_mask').alias('attention_mask'),
-            )
+                                        )
+
             train_df.show()
 
             data_rows = train_df.collect()
@@ -901,17 +840,15 @@ class genDataset:
 
             # ------------------------------------------
             raw_batch_array = self.batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
-            self.batch_preprocess_text(raw_batch_array)
             self.extract_text_tokens(raw_batch_array)
-
-            # print("SpaCy Tokens:", self.spaCy_features[0]['tokens'])
-            # print("BERT Tokens:", self.bert_tokens.data['input_ids'][0])
-            # print()
-            self.batch_extract_aspects(raw_batch_array, self.spaCy_features)
+            nlp_feature_set = ['tokens', 'POS', 'entities', 'labels', 'negations', 'LDA_aspect_prob']
+            batch_nlp = self.nlp_batch_for_aspects(raw_batch_array, nlp_feature_set)
+            self.batch_extract_aspects(batch_nlp, nlp_feature_set, 2)
             self.batch_df = self.prep_token_flatten(self.batch_df, raw_batch_array)
 
             # Bootle Neck
-            self.aspects, self.batch_df = self.flatten_df(self.batch_df, raw_batch_array, self.raw_text_col, self.aspects, 'aspectTerm', dict)
+            self.aspects, self.batch_df = self.flatten_df(self.batch_df, raw_batch_array, self.raw_text_col,
+                                                          self.aspects, 'aspectTerm', dict)
             # / Bootle Neck
 
             self.index = self.batch_df.select('index').rdd.flatMap(lambda x: x).collect()
@@ -920,43 +857,51 @@ class genDataset:
             token_type_ids = self.batch_df.select("token_type_ids").rdd.flatMap(lambda x: x).collect()
             attention_mask = self.batch_df.select("attention_mask").rdd.flatMap(lambda x: x).collect()
             spaCy_tokens = self.batch_df.select("spaCy_tokens").rdd.flatMap(lambda x: x).collect()
+            POS = self.batch_df.select("POS").rdd.flatMap(lambda x: x).collect()
             POS_tags = self.batch_df.select("POS_tags").rdd.flatMap(lambda x: x).collect()
+            heads = self.batch_df.select("heads").rdd.flatMap(lambda x: x).collect()
             dependencies = self.batch_df.select("dependencies").rdd.flatMap(lambda x: x).collect()
             negations = self.batch_df.select("negations").rdd.flatMap(lambda x: x).collect()
-
+            batch_spaCy_features = [spaCy_tokens, POS, POS_tags, heads, dependencies, negations]
 
             self.batch_generate_aspect_masks(input_ids, self.index)
-            batch_spaCy_features = [spaCy_tokens, POS_tags, dependencies, negations]
-            self.batch_extract_polarity_implicitness(raw_batch_array, batch_spaCy_features, self.aspects)
-            self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask, self.aspects, self.aspect_masks, self.polarity_implicitness)
+            batch_features_2 = ['tokens', 'POS', 'POS_tags', 'heads', 'dependencies', 'negations']
+            batch_nlp = self.nlp_batch_for_implicitness(raw_text, batch_spaCy_features, self.aspects)
+            self.batch_extract_polarity_implicitness(batch_nlp, batch_features_2)
+            self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask,
+                                                        self.aspects, self.aspect_masks, self.polarity_implicitness)
             # ------------------------------------------
             self.write_parquet_file(self.processed_batch_df, self.output_file_path)
             self.processed_ids = self.processed_batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             self.remaining_df = self.remaining_df.filter(~self.remaining_df[self.raw_text_col].isin(self.processed_ids))
             self.remaining_df.show()
         try:
-            self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
+            self.write_pkl_file(self.processed_batch_df)
             print('Run Complete.')
         except:
             print('All data already processed. Terminating.')
+
 
 if __name__ == '__main__':
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY is not set in the environment.")
 
-
     raw_file_path = './data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
     #stanza_path = "./data/gen/stanza-7226101187500723498-201.parquet"
     out_parquet_path = "data/gen/train_dataframe.parquet"
     out_pkl_path = './data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
 
+    pre_args = parse_arguments(stanza=False, nltk=True, spacy=True)
+    preprocessor = NLPTextAnalyzer(args=pre_args)
+    comments = preprocessor.read_CSV(raw_file_path)
+    nlp_feature_df = preprocessor.construct_nlp_feature_df(comments, 'comments')
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='./config/genconfig.yaml', help='config file')
     # parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/raw/raw_dev.csv')
     parser.add_argument('-r', '--raw_file_path', default=raw_file_path)
-    parser.add_argument('-s', '--stanza_file_path', default='') #stanza_path)
+    parser.add_argument('-s', '--stanza_file_path', default='')  #stanza_path)
 
     parser.add_argument('-r_col', '--raw_text_col', default='Comment')
     parser.add_argument('-o', '--out_file_path', default=out_parquet_path)
@@ -966,6 +911,7 @@ if __name__ == '__main__':
     parser.add_argument('-pkl', '--output_pkl_path', default=out_pkl_path)
 
     args = parser.parse_args()
-    gen = genDataset(args=args)
+    gen = genDataset(args=args, pre_nlp=nlp_feature_df)
+
     gen.run()
     #gen.write_pkl_file(out_pkl_path)

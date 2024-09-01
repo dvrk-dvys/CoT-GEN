@@ -204,7 +204,7 @@ This preprocessor with Stanza took:
 class Preprocessor:
     def __init__(self, config):
         self.config = config
-        from src.stanza_srilm import NLPTextAnalyzer
+        from src.preprocess_utils import NLPTextAnalyzer
         self.NLPanalyzer = NLPTextAnalyzer()
         #self.nlp = spacy.load("en_core_web_lg")
 
