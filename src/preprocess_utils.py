@@ -150,7 +150,7 @@ class NLPTextAnalyzer:
 
     def extract_spaCy_features(self, doc):
         artifacts = {
-            'tokens': [],
+            'spaCy_tokens': [],
             'POS': [],
             'POS_tags': [],
             'dependencies': [],
@@ -163,7 +163,7 @@ class NLPTextAnalyzer:
         }
 
         for token in doc:
-            artifacts['tokens'].append(token.text)
+            artifacts['spaCy_tokens'].append(token.text)
             artifacts['POS'].append(token.pos_)
             artifacts['POS_tags'].append(token.tag_) #    question_tags = {'WDT', 'WP', 'WP$', 'WRB'}
             artifacts['dependencies'].append(token.dep_)
@@ -180,7 +180,7 @@ class NLPTextAnalyzer:
 
     def batch_preprocess_text(self, input_texts):
         self.spaCy_features = {
-            'tokens': [],
+            'spaCy_tokens': [],
             'POS': [],
             'POS_tags': [],
             'dependencies': [],
@@ -194,7 +194,7 @@ class NLPTextAnalyzer:
 
         for doc in self.nlp.pipe(input_texts):
             features = self.extract_spaCy_features(doc)
-            self.spaCy_features['tokens'].append(features['tokens'])
+            self.spaCy_features['spaCy_tokens'].append(features['spaCy_tokens'])
             self.spaCy_features['POS'].append(features['POS'])
             self.spaCy_features['POS_tags'].append(features['POS_tags'])
             self.spaCy_features['dependencies'].append(features['dependencies'])
@@ -204,7 +204,6 @@ class NLPTextAnalyzer:
             self.spaCy_features['entities'].append(features['entities'])
             self.spaCy_features['labels'].append(features['labels']) #labels are the label of the entity
             self.spaCy_features['sentences'].append(features['sentences'])
-
         return self.spaCy_features
 
     def construct_nlp_feature_df(self, raw_text, col_name):
@@ -212,8 +211,11 @@ class NLPTextAnalyzer:
         spacy_features_col = self.batch_preprocess_text(raw_text)
         raw_text_df = pd.DataFrame({col_name: raw_text})
         aspects_df = pd.DataFrame({'LDA_aspect_prob': aspect_col})
+        aspects_df['LDA_aspect_prob'] = aspects_df['LDA_aspect_prob'].apply(lambda x: [str(item) for item in x])
         spacy_features_df = pd.DataFrame(spacy_features_col)
-        return pd.concat([raw_text_df, aspects_df, spacy_features_df], axis=1)
+        pre_nlp_df = pd.concat([raw_text_df, aspects_df, spacy_features_df], axis=1)
+        #print(pre_nlp_df)
+        return pre_nlp_df
 
     def save(self, data, csv_path, parquet_path):
         df = pd.DataFrame(data)
