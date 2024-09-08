@@ -1,37 +1,31 @@
 import argparse
-import math
 import pickle
 import os
+import re
 import time
 from functools import wraps
-from collections import Counter, defaultdict
 
+import spacy
 import yaml
-import numpy as np
-from collections import Counter
 from attrdict import AttrDict
 
 import transformers
 from transformers import TFRobertaModel
 from transformers import AutoTokenizer
 import pandas as pd
-import spacy
-
 
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import Row
 from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id
 from pyspark.sql.functions import unix_timestamp, from_unixtime
-from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, LongType, DoubleType
+from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, LongType
+
 from openai import OpenAI
 import json
 from distutils.util import strtobool
 from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
-import stanza
 
-stanza.download('en')
-#doc = nlp("Barack Obama was born in Hawaii.") # run annotation over a sentence
 
 # polarity_key = {0:positive, 1:negative, 2:neutral}
 
@@ -126,7 +120,6 @@ stanza.download('en')
 # negation then counter info
 # how to rate information density?
 
-
 def runtime(func):
         @wraps(func)
         def runtime_wrapper(*args, **kwargs):
@@ -170,7 +163,6 @@ def json_error_handler(max_retries=3, delay_seconds=8, spec=''):
         return wrapper
     return decorator
 
-
 class genDataset:
     def __init__(self, args):
         # cwd = os.getcwd()
@@ -187,8 +179,6 @@ class genDataset:
                               .master("local[*]")
                               .appName("TiktokComments")
                               .getOrCreate())
-        #self.entropy_udf = udf(lambda text: calculate_shannon_entropy(text), DoubleType())
-        #self.entropy_udf = udf(entropy_udf, DoubleType())
 
         self.csv_schema = StructType([
             StructField("Comment ID", StringType(), True),
@@ -240,7 +230,6 @@ class genDataset:
         ])
 
         self.input_file_path = args.raw_file_path
-        self.stanza_file_path = args.stanza_file_path
         self.output_file_path = args.out_file_path
         self.raw_text_col = args.raw_text_col
         self.out_text_col = args.out_text_col
@@ -250,226 +239,23 @@ class genDataset:
         self.processed_ids = []
         self.remaining_df = None
 
-        self.trigram_probabilities = {}
-
-
-        self.base_df, self.raw_input_array = self.initialize_df(self.raw_text_col, self.out_text_col)
-        self.model = "gpt-4o"
-        #self.model = "gpt-4"
+        self.base_df, self.raw_input_array = self.intialize_df(self.raw_text_col, self.out_text_col)
+        self.model = "gpt-4"
         #self.model="gpt-3.5-turbo"
-    @staticmethod
-    @udf(returnType=DoubleType())
-    def calc_shannon_entropy(text):
-        tokens = text.split()
-        freq_dist = Counter(tokens)
-        total_tokens = len(tokens)
-        prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
-        entropy = -sum(prob * math.log2(prob) for prob in prob_dist.values())
-        return entropy
 
-    def calc_joint_prob_dist(self, corpus):
-        tokens = corpus.lower().split()
-        total_tokens = len(tokens)
-        freq_dist = Counter(tokens)
-        prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
-        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
-        joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
-        return prob_dist, joint_prob_dist
 
-    def construct_reply_trees(self, comment_pairs):
-        reply_tree = {}
-        for row in comment_pairs:
-            comment_id = row["Comment ID"]
-            reply_to_id = row["Reply to Which Comment"]
-            if reply_to_id:
-                if reply_to_id not in reply_tree:
-                    reply_tree[reply_to_id] = []
-                reply_tree[reply_to_id].append(comment_id)
-        return reply_tree
-
-    def calc_trigram_probabilities(self, corpus):
-        tokens = corpus.lower().split()
-        total_tokens = len(tokens)
-
-        trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
-        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
-
-        self.trigram_probabilities = {
-            (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
-            for (w1, w2, w3), count in trigram_freq_dist.items()
-        }
-
-    def calc_contextual_trigram_probabilities(self, corpus):
-        tokens = corpus.lower().split()
-        total_tokens = len(tokens)
-
-        trigram_freq_dist = Counter(zip(tokens, tokens[1:], tokens[2:]))
-        bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
-
-        trigram_probabilities = {
-            (w1, w2, w3): count / bigram_freq_dist[(w1, w2)]
-            for (w1, w2, w3), count in trigram_freq_dist.items()
-        }
-        return trigram_probabilities
-
-    def contextual_surprisal(self, text, trigram_probabilities):
-        words = text.lower().split()
-        surprisals = []
-
-        for i in range(2, len(words)):
-            w1, w2, w3 = words[i - 2], words[i - 1], words[i]
-            trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
-            surprisal = -math.log2(trigram_prob)
-            surprisals.append(surprisal)
-
-        return sum(surprisals) / len(surprisals) if surprisals else 0.0
-
-    def contextual_perplexity(self, text, trigram_probabilities):
-        words = text.lower().split()
-        N = len(words)
-        log_prob_sum = 0.0
-
-        for i in range(2, len(words)):
-            w1, w2, w3 = words[i - 2], words[i - 1], words[i]
-            trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
-            log_prob_sum += math.log2(trigram_prob)
-
-        avg_log_prob = log_prob_sum / (N - 2) if N > 2 else 0
-        perplexity = 2 ** (-avg_log_prob)
-        return perplexity
-
-   #def calculate_tree_prob_dist(self, tree_comments):
-   #     tokens = " ".join(tree_comments).lower().split()
-   #     total_tokens = len(tokens)
-   #     freq_dist = Counter(tokens)
-   #     prob_dist = {token: count / total_tokens for token, count in freq_dist.items()}
-   #     bigram_freq_dist = Counter(zip(tokens, tokens[1:]))
-   #     joint_prob_dist = {bigram: count / (total_tokens - 1) for bigram, count in bigram_freq_dist.items()}
-   #     return prob_dist, joint_prob_dist
-
-    def contextual_MI_Score(self, text, prob_dist, joint_prob_dist):
-        tokens = text.lower().split()
-        mutual_information_score = 0.0
-        for i in range(len(tokens) - 1):
-            x, y = tokens[i], tokens[i + 1]
-            joint_prob = joint_prob_dist.get((x, y), 1e-10)  # Small probability for unseen bigrams
-            marginal_prob_x = prob_dist.get(x, 1e-10)
-            marginal_prob_y = prob_dist.get(y, 1e-10)
-            mutual_information_score += joint_prob * math.log2(joint_prob / (marginal_prob_x * marginal_prob_y))
-        return mutual_information_score
-
-    def construct_contextual_scores(self, df):
-        comment_pairs = [row.asDict() for row in df.collect()]
-        reply_trees = self.construct_reply_trees(comment_pairs)
-        scores = []
-
-        for root_comment, comment_ids in reply_trees.items():
-            comment_ids = [root_comment] + comment_ids
-
-            branch = df.filter(df["Comment ID"].isin(comment_ids)).select("Comment ID", "Comment").collect()
-            comment_corpus = " ".join([row["Comment"] for row in branch])
-
-            prob_dist, joint_prob_dist = self.calc_joint_prob_dist(comment_corpus)
-            contextual_trigram_probabilities = self.calc_contextual_trigram_probabilities(comment_corpus)
-
-            for comment_row in branch:
-                comment = comment_row["Comment"]
-                mi_score = self.contextual_MI_Score(comment, prob_dist, joint_prob_dist)
-                surprisal_score = self.contextual_surprisal(comment, contextual_trigram_probabilities)
-                perplexity_score = self.contextual_perplexity(comment, contextual_trigram_probabilities)
-                scores.append((comment_row["Comment ID"], float(mi_score), float(surprisal_score), float(perplexity_score)))
-
-        scores_df = self.spark_session.createDataFrame(scores, ["Comment ID", "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity"])
-        df = df.join(scores_df, on="Comment ID", how="left")
-        return df
-
-    def initialize_df(self, raw_text_column, out_text_col):
+    def intialize_df(self, raw_text_column, out_text_col):
         base_df = (
             self.spark_session.read
             .schema(self.csv_schema)
             .csv(f"{self.input_file_path}", header=True, inferSchema=True)
-            .withColumn("shannon_entropy", self.calc_shannon_entropy(col(raw_text_column)))
-            #.withColumn("surprisal", self.calculate_surprisal(col(raw_text_column)))
+            .withColumn("index", monotonically_increasing_id())
             .withColumn("index", monotonically_increasing_id())
             .withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
-            .orderBy(col("Comment Time"))
+            #.orderBy(col("Comment Time"))
             # .limit(self.batch_size)
         )
-        base_df.show()
-        stanza_df = self.spark_session.read.parquet(self.stanza_file_path)
-        joined_df = base_df.join(stanza_df, base_df[raw_text_column] == stanza_df['sentence'], "left_outer")
-        base_df = joined_df.drop(stanza_df['sentence'])
-        base_df.show()
-
-        #####################
-
-        corpus = base_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
-        self.comment_corpus = " ".join(corpus)
-        self.calc_trigram_probabilities(self.comment_corpus)
-        self.prob_dist, self.joint_prob_dist = self.calc_joint_prob_dist(self.comment_corpus)
-
-        prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.prob_dist)
-        joint_prob_dist_broadcast = self.spark_session.sparkContext.broadcast(self.joint_prob_dist)
-
-        @udf(returnType=DoubleType())
-        def mutual_information_udf(text):
-            prob_dist = prob_dist_broadcast.value
-            joint_prob_dist = joint_prob_dist_broadcast.value
-            tokens = text.lower().split()
-            mutual_information_score = 0.0
-            for i in range(len(tokens) - 1):
-                x, y = tokens[i], tokens[i + 1]
-                joint_prob = joint_prob_dist.get((x, y), 1e-10)  # Small probability for unseen bigrams
-                marginal_prob_x = prob_dist.get(x, 1e-10)
-                marginal_prob_y = prob_dist.get(y, 1e-10)
-                mutual_information_score += joint_prob * math.log2(joint_prob / (marginal_prob_x * marginal_prob_y))
-            return mutual_information_score
-
-        base_df = base_df.withColumn("mutual_information_score", mutual_information_udf(col("Comment")))
-
-        trigram_probabilities_broadcast = self.spark_session.sparkContext.broadcast(self.trigram_probabilities)
-
-        @udf(returnType=DoubleType())
-        def surprisal_udf(text):
-            trigram_probabilities = trigram_probabilities_broadcast.value
-            words = text.lower().split()
-            surprisals = []
-
-            for i in range(2, len(words)):
-                w1, w2, w3 = words[i - 2], words[i - 1], words[i]
-                trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
-                surprisal = -math.log2(trigram_prob)
-                surprisals.append(surprisal)
-
-            return sum(surprisals) / len(surprisals) if surprisals else 0.0
-
-
-        base_df = base_df.withColumn("surprisal", surprisal_udf(col("Comment")))
-        @udf(returnType=DoubleType())
-        def perplexity_udf(text):
-            trigram_probabilities = trigram_probabilities_broadcast.value
-            words = text.lower().split()
-            N = len(words)
-            log_prob_sum = 0.0
-
-            for i in range(2, len(words)):
-                w1, w2, w3 = words[i - 2], words[i - 1], words[i]
-                trigram_prob = trigram_probabilities.get((w1, w2, w3), 1e-10)  # Small probability for unseen trigrams
-                log_prob_sum += math.log2(trigram_prob)
-
-            avg_log_prob = log_prob_sum / (N - 2) if N > 2 else 0
-            perplexity = 2 ** (-avg_log_prob)
-            return perplexity
-
-        base_df = base_df.withColumn("perplexity", perplexity_udf(col("Comment")))
-
-        base_df = self.construct_contextual_scores(base_df)
-        base_df.show()
-
-
-
-        # base_df = base_df.withColumn("Comment Time", col("Comment Time").cast("timestamp"))
-        base_df = base_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
+        print('Initialize DF')
         base_df.show(self.batch_size)
 
         # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
@@ -484,126 +270,9 @@ class genDataset:
             self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
 
         self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
-        self.remaining_df.show()
         print(self.remaining_df.count(), ' Rows remaining')
+        self.remaining_df.show(10, truncate=False)
         return self.remaining_df, raw_input_array
-
-    def extract_spaCy_features(self, doc):
-        artifacts = {
-            'tokens': [],
-            'POS_tags': [],
-            'dependencies': [],
-            'negations': []
-        }
-
-        for token in doc:
-            artifacts['tokens'].append(token.text)
-            artifacts['POS_tags'].append(token.pos_)
-            artifacts['dependencies'].append(token.dep_)
-            # artifacts['lemmas'].append(token.lemma_)
-            # artifacts['heads'].append(token.head.text)
-            if token.dep_ == 'neg':
-                artifacts['negations'].append(token.head.text)
-        # for ent in doc.ents:
-        #     artifacts['entities'].append(ent.text)
-        #     artifacts['labels'].append(ent.label_)
-        # #
-        # for span in doc.sents:
-        #     artifacts['sentences'].append(span.text)
-        return artifacts
-
-    def batch_preprocess_text(self, input_texts):
-        self.spaCy_features = {
-            'tokens': [],
-            'POS_tags': [],
-            'dependencies': [],
-            'negations': []
-        }
-
-        for doc in self.nlp.pipe(input_texts):
-            features = self.extract_spaCy_features(doc)
-            self.spaCy_features['tokens'].append(features['tokens'])
-            self.spaCy_features['POS_tags'].append(features['POS_tags'])
-            self.spaCy_features['dependencies'].append(features['dependencies'])
-            self.spaCy_features['negations'].append(features['negations'])
-
-        # print("spaCy features extracted:", self.spaCy_features)
-        # return self.spaCy_features
-
-    def extract_spaCy_features(self, doc):
-         artifacts = [[],[],[],[]]
-
-         for token in doc:
-             artifacts[0].append(token.text)  # Append each token's text to the list
-             # artifacts['lemmas'].append(token.lemma_)
-             artifacts[1].append(token.pos_)
-             artifacts[2].append(token.dep_)
-             # artifacts['heads'].append(token.head.text)
-
-         # for ent in doc.ents:
-         #     artifacts['entities'].append(ent.text)
-         #     artifacts['labels'].append(ent.label_)
-         #
-         # for span in doc.sents:
-         #     artifacts['sentences'].append(span.text)
-
-             if token.dep_ == 'neg':
-                 artifacts[3].append(token.head.text)
-
-         return artifacts
-
-    # def batch_preprocess_text(self, input_texts):
-    #     # self.spaCy_features = []
-    #
-    #     self.spaCy_features = {
-    #         'tokens': [],
-    #         # The base form of each word, useful for normalizing text to reduce word form variation and improve matching and retrieval tasks.
-    #         # 'lemmas': [],
-    #         # Part-of-speech tags for each word, critical for understanding grammatical structure and roles, aiding in parsing and informing syntactic analysis.
-    #         'POS_tags': [],
-    #         # Dependency relations between tokens, essential for understanding syntactic structure of sentences, which is pivotal in tasks that require deep comprehension of sentence construction.
-    #         'dependencies': [],
-    #         # The syntactic head of each token, indicating the token that governs or controls the token in syntax, crucial for parsing tree construction and understanding hierarchical syntax relationships.
-    #         # 'heads': [],
-    #         # # Named entities extracted from text, such as names of people, organizations, locations, etc., key for information extraction and knowledge graph construction.
-    #         # 'entities': [],
-    #         # # Labels associated with the named entities, indicating the category of each entity (e.g., person, location, organization), useful for classifying and differentiating types of information in text.
-    #         # 'labels': [],
-    #         # #  Individual sentences segmented from the text, fundamental for tasks that operate on or analyze data at the sentence level, such as summarization or sentiment analysis.
-    #         # 'sentences': [],
-    #         'negations': []
-    #         # 'categories': doc.cats  # Capture categories if available (often empty without training)
-    #     }
-    #
-    #     for doc in self.nlp.pipe(input_texts):
-    #         a = self.extract_spaCy_features(doc)
-    #         self.spaCy_features['tokens'].append(a[0])  # Append each token's text to the list
-    #         # artifacts['lemmas'].append(token.lemma_)
-    #         a['POS_tags'].append(a[1])
-    #         a['dependencies'].append(a[2])
-    #         # artifacts['heads'].append(token.head.text)
-    #
-    #         # for ent in doc.ents:
-    #         #     artifacts['entities'].append(ent.text)
-    #         #     artifacts['labels'].append(ent.label_)
-    #         #
-    #         # for span in doc.sents:
-    #         #     artifacts['sentences'].append(span.text)
-    #
-    #         a['negations'].append(a[3])
-    #
-    #         # features = self.extract_spaCy_features(doc)
-    #         # self.spaCy_features.append(features)
-    #
-    #     # return self.spaCy_features
-
-    def extract_negations(self, text):
-        print()
-
-    def preprocess_text(self, text):
-        nlp = stanza.Pipeline('en')
-        doc = nlp("Barack Obama was born in Hawaii.")  # run annotation over a sentence
-        print()
 
     """
     The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
@@ -620,29 +289,29 @@ class genDataset:
                                                          max_length=self.config.max_length,
                                                          return_tensors=None)
         print(batch_encoded)
-        self.bert_tokens = batch_encoded
-        return self.bert_tokens
+        self.tokens = batch_encoded
+        return self.tokens
 
 
     def prep_token_flatten(self, batch_df, raw_batch_array):
         zip_data = [
-            (input_ids, token_type_ids, attention_mask, spaCy_tokens, POS_tags, dependencies, negations, raw_input)
-            for input_ids, token_type_ids, attention_mask, spaCy_tokens, POS_tags, dependencies, negations, raw_input in zip(
-                self.bert_tokens.data['input_ids'],
-                self.bert_tokens.data['token_type_ids'],
-                self.bert_tokens.data['attention_mask'],
-                self.spaCy_features['tokens'],
-                self.spaCy_features['POS_tags'],
-                self.spaCy_features['dependencies'],
-                self.spaCy_features['negations'],
+            (input_ids, token_type_ids, attention_mask, raw_input)
+            for input_ids, token_type_ids, attention_mask, raw_input in zip(
+                self.tokens.data['input_ids'],
+                self.tokens.data['token_type_ids'],
+                self.tokens.data['attention_mask'],
                 raw_batch_array
             )
         ]
 
-        token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', 'spaCy_tokens', 'POS_tags', 'dependencies', 'negations', self.raw_text_col])
-        token_nest_df.show()
-        batch_df.show()
+        token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', self.raw_text_col])
+        print('Token Nest DF')
+        token_nest_df.show(n=5, truncate=False)
+        print('Orig Batch')
+        batch_df.show(n=5, truncate=False)
         batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left").orderBy('index')
+
+        print('Joined Batch')
         batch_df.show()
         return batch_df
 
@@ -688,34 +357,44 @@ class genDataset:
                 {"role": "user", "content": prompt}
             ]
         )
-        response = completion.choices[0].message.content
         try:
-            response = json.loads(response)
-        except:
-            print()
+            response = completion.choices[0].message.content
+            if response == None:
+                print()
+            cleaned_response = re.search(r"\[.*\]$", response, re.DOTALL)
+            if cleaned_response is None:
+                raise ValueError("Could not extract JSON array from the response. Response: " + response)
+            cleaned_response = re.sub(r"(?<!\\)'", '"', cleaned_response.string)
+            response = json.loads(cleaned_response)
+            if response == None:
+                print()
+        except (json.JSONDecodeError, AssertionError) as e:
+            print("Error parsing JSON:", str(e))
+            print("Cleaned Response:", cleaned_response)  # Debug the problematic content
+            if response == None:
+                print()
+
         print(response)
         assert isinstance(response, list), f"{self.model} output is read to list"
         assert isinstance(response[0], dict), f"{self.model} output is read to list"
+
         return response
 
     def generate_aspect_mask(self, sentence_tokens, aspect_tokenized):
-        try:
-            mask = [0] * len(sentence_tokens)
-            aspect_len = len(aspect_tokenized)
-            for i in range(len(sentence_tokens) - aspect_len + 1):
-                if sentence_tokens[i:i + aspect_len] == aspect_tokenized:
-                    for j in range(i, i + aspect_len):
-                        mask[j] = 1
-        except:
-            print()
+        mask = [0] * len(sentence_tokens)
+        aspect_len = len(aspect_tokenized)
+        for i in range(len(sentence_tokens) - aspect_len + 1):
+            if sentence_tokens[i:i + aspect_len] == aspect_tokenized:
+                for j in range(i, i + aspect_len):
+                    mask[j] = 1
         return mask
 
-    def batch_generate_aspect_masks(self, input_ids, index):
+    def batch_generate_aspect_masks(self, index): #input_ids,
         self.aspect_masks = []
         for i, a in enumerate(self.aspects):
             encoded_aspect_token = self.tokenizer.encode(a, add_special_tokens=False)
             local_index = index[i] % self.batch_size
-            self.aspect_masks.append(self.generate_aspect_mask(self.bert_tokens.data['input_ids'][local_index], encoded_aspect_token))
+            self.aspect_masks.append(self.generate_aspect_mask(self.tokens.data['input_ids'][local_index], encoded_aspect_token))
         return self.aspect_masks
 
     def safe_strtobool(self, value):
@@ -736,28 +415,23 @@ class genDataset:
 
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Aspects')
     @rest_after_run(sleep_seconds=4)
-
-    def batch_extract_aspects(self, batch_input_array, batch_spaCy_features):
-
-        new_context = f'Given these sentences "{batch_input_array}" and these spaCy NLP features "{batch_spaCy_features}", '
+    def batch_extract_aspects(self, batch_input_array):
+        new_context = f'Given these sentences "{batch_input_array}", '
         prompt = new_context + f'which words or phrases are the aspect terms?'
         role = (
             "You are a system that identifies the core word(s) or phrase(s) in a list of sentences, which represent the aspect or target term(s). "
-            "When considering each sentence also assess all of the nlp spaCy features at the corresponding index."
-            "The NLP features you will be looking at are the TOKENS, POS TAGS, DEPENDENCIES and NEGATIONS if applicable"
+            "Be sure to consider all aspects (Tangible or Intangible) that may be or reference a person, place or thing. "
+            "Treat opinions or mental concepts as their own aspect when there are subjective statements or implicit sentiment made about them."
+            "These are the words that other words or phrases in the sentence relate to and augment, either implicitly or explicitly."
             "Return the results as a JSON array with proper formatting, where each entry is a JSON object with one key:'aspectTerm'."
             "If a sentence contains more than one aspect term, list them together as the value for 'aspectTerm'. For example, [{'aspectTerm': 'term0'}, {'aspectTerm': ['term0', 'term1', 'term2']}, ...]."
-            "If not significant aspect term is found have the value be 'NONE'. Each aspect object corresponds to the input sentence, indexed accordingly."
+            "If not significant aspect term is found have the value be 'NONE'. Each aspect object cooresponds to the input sentence, indexed accordingly."
             "Finally check your output for trailing commas, missing or extra brackets, correct quotation marks, and special characters."
             "Ensure the output contains only this JSON array and no additional text."
         )
         self.aspects = self.prompt_gpt(role, prompt)
-        try:
-            assert len(self.aspects) == len(batch_input_array)
-        except:
-            print()
-        #assert len(self.aspects) == len(batch_input_array)
-        return self.aspects  #, self.aspect_masks
+        assert len(self.aspects) == self.batch_size
+        return self.aspects
 
     def extract_polarity_implicitness(self, aspects):
         new_context = f'Given the sentence "{self.raw_input_array}", and this/these aspect term(s),"{aspects}'
@@ -773,32 +447,38 @@ class genDataset:
 
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Polarity & Implicits')
     @rest_after_run(sleep_seconds=4)
-    def batch_extract_polarity_implicitness(self, batch_input_array, batch_spaCy_features, aspects):
-        new_context = f'Given these sentences "{batch_input_array}", spaCy NLP features "{batch_spaCy_features} and corresponding aspect terms "{aspects}" with input length: {len(aspects)}, '
-        # new_context = f'Given this list of lists of sentences, spaCy NLP features and corresponding aspect terms "{zipped_data}" of  length: {self.batch_size}, '
-        prompt = new_context + f'determine the polarity (positive, negative or neutral) of aspect term and if it is explicitly or implicitly expressed with respect to the whole sentence?'
+    def batch_extract_polarity_implicitness(self, batch_input_array, aspects):
+        new_context = f'Given these sentences "{batch_input_array}" and aspect term pairs"{aspects}" which are of length {len(aspects)}, '
+        prompt = new_context + f'determine the polairty (positive, negative or neutral) of aspect term and if it is explicitely or implicitely expressed with respect to the whole sentence?'
         role = (
-            "You are operating as a system that, given a list of sentence, spaCy NLP features & aspect terms, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence."
-            "When considering each sentence also assess all of the nlp spaCy features at the corresponding index."
-            "The NLP features you will be looking at are the TOKENS, POS TAGS, DEPENDENCIES and NEGATIONS if applicable"
+            "You are operating as a system that, given a list of sentence & aspect term pairs, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence."
             "Polarity is either positive (0), negative (1) or neutral (2). Then, determine if the expression is implicit or explicit (True or False)."
             "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'."
-            "Each entry represents an input sentence-feature-aspect set, indexed accordingly."
+            "Each entry represents an input sentence-aspect pair, indexed accordingly."
             "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...]"
-            "Be sure to assess every single aspect term and that the length of your output is EXACTLY THE SAME as the length as the INPUT."
+            "Be sure to assess every single aspect term and that the length of your output is exactly the same as the length of the given sentence array and aspect array."
             "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters."
             "Ensure the output contains only this JSON array and no additional text.")
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
         try:
-            assert len(self.polarity_implicitness) == len(aspects)
-        except:
-            print()
+            # Check if any of the values are None
+            if self.polarity_implicitness is None or self.aspects is None:
+                raise TypeError("One or both of the lists are NoneType and cannot be compared.")
+
+            # Check if the lengths of the lists match
+            assert len(self.polarity_implicitness) == len(self.aspects), \
+                f"Length mismatch: polarity_implicitness ({len(self.polarity_implicitness)}) vs aspects ({len(self.aspects)})"
+
+        except (json.JSONDecodeError, AssertionError, TypeError, ValueError) as e:
+            print("Error occurred:", str(e))
         return self.polarity_implicitness
 
     def transform_df(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask, polarity_implicitness):
         # aspect_terms = [i['aspectTerm'] for i in aspect]
-
-        implicitness = [self.safe_strtobool(i['implicitness']) for i in polarity_implicitness]
+        try:
+            implicitness = [self.safe_strtobool(i['implicitness']) for i in polarity_implicitness]
+        except:
+            print()
         polarity = [i['polarity'] for i in polarity_implicitness]
 
         rows = [
@@ -814,10 +494,7 @@ class genDataset:
             )
             for i in range(len(aspect_terms))
         ]
-        # try:
         final_train_df = self.spark_session.createDataFrame(rows, self.isa_schema)
-        # except:
-        #     print()
 
         full_final_df = final_train_df.alias('a').join(
             self.base_df.alias('b'),
@@ -876,13 +553,8 @@ class genDataset:
 
             # ------------------------------------------
             raw_batch_array = self.batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
-            self.batch_preprocess_text(raw_batch_array)
+            self.batch_extract_aspects(raw_batch_array)
             self.extract_text_tokens(raw_batch_array)
-
-            # print("SpaCy Tokens:", self.spaCy_features[0]['tokens'])
-            # print("BERT Tokens:", self.bert_tokens.data['input_ids'][0])
-            # print()
-            self.batch_extract_aspects(raw_batch_array, self.spaCy_features)
             self.batch_df = self.prep_token_flatten(self.batch_df, raw_batch_array)
 
             # Bootle Neck
@@ -894,15 +566,11 @@ class genDataset:
             input_ids = self.batch_df.select("input_ids").rdd.flatMap(lambda x: x).collect()
             token_type_ids = self.batch_df.select("token_type_ids").rdd.flatMap(lambda x: x).collect()
             attention_mask = self.batch_df.select("attention_mask").rdd.flatMap(lambda x: x).collect()
-            spaCy_tokens = self.batch_df.select("spaCy_tokens").rdd.flatMap(lambda x: x).collect()
-            POS_tags = self.batch_df.select("POS_tags").rdd.flatMap(lambda x: x).collect()
-            dependencies = self.batch_df.select("dependencies").rdd.flatMap(lambda x: x).collect()
-            negations = self.batch_df.select("negations").rdd.flatMap(lambda x: x).collect()
+
+            self.batch_generate_aspect_masks(self.index)
+            self.batch_extract_polarity_implicitness(raw_batch_array, self.aspects)
 
 
-            self.batch_generate_aspect_masks(input_ids, self.index)
-            batch_spaCy_features = [spaCy_tokens, POS_tags, dependencies, negations]
-            self.batch_extract_polarity_implicitness(raw_batch_array, batch_spaCy_features, self.aspects)
 
             self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask, self.aspects, self.aspect_masks, self.polarity_implicitness)
             # ------------------------------------------
@@ -910,25 +578,22 @@ class genDataset:
             self.processed_ids = self.processed_batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             self.remaining_df = self.remaining_df.filter(~self.remaining_df[self.raw_text_col].isin(self.processed_ids))
             self.remaining_df.show()
-        try:
-            self.write_pkl_file(self.processed_batch_df, self.output_pkl_path)
+
+        if not os.path.exists(self.output_pkl_path):
+            self.write_pkl_file(self.output_pkl_path)
             print('Run Complete.')
-        except:
+        else:
             print('All data already processed. Terminating.')
 
 if __name__ == '__main__':
     raw_file_path = './data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
-    stanza_path = "./data/gen/stanza-7226101187500723498-201.parquet"
-    out_parquet_path = "data/gen/train_dataframe.parquet"
+    out_parquet_path = "./data/gen/debug_train_dataframe.parquet"
     out_pkl_path = './data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
-
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', default='./config/genconfig.yaml', help='config file')
     # parser.add_argument('-i', '--raw_file_path', default='/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/raw/raw_dev.csv')
     parser.add_argument('-r', '--raw_file_path', default=raw_file_path)
-    parser.add_argument('-s', '--stanza_file_path', default=stanza_path)
-
     parser.add_argument('-r_col', '--raw_text_col', default='Comment')
     parser.add_argument('-o', '--out_file_path', default=out_parquet_path)
     parser.add_argument('-o_col', '--out_text_col', default='raw_text')
@@ -939,4 +604,3 @@ if __name__ == '__main__':
     args = parser.parse_args()
     gen = genDataset(args=args)
     gen.run()
-    #gen.write_pkl_file(out_pkl_path)
