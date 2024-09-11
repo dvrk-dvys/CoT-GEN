@@ -158,8 +158,6 @@ def json_error_handler(max_retries=3, delay_seconds=8, spec=''):
                     else:
                         print("Max retries exceeded. Run Canceled")
                         break
-            # return none?
-            # return None
         return wrapper
     return decorator
 
@@ -240,7 +238,7 @@ class genDataset:
         self.remaining_df = None
 
         self.base_df, self.raw_input_array = self.intialize_df(self.raw_text_col, self.out_text_col)
-        self.model = "gpt-4"
+        self.model = self.config['chat_gpt_model_path']
         #self.model="gpt-3.5-turbo"
 
 
@@ -451,14 +449,13 @@ class genDataset:
         new_context = f'Given these sentences "{batch_input_array}" and aspect term pairs"{aspects}" which are of length {len(aspects)}, '
         prompt = new_context + f'determine the polairty (positive, negative or neutral) of aspect term and if it is explicitely or implicitely expressed with respect to the whole sentence?'
         role = (
-            "You are operating as a system that, given a list of sentence & aspect term pairs, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence."
+            "You are operating as a system that, given a list of sentence & aspect term pairs, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence by filling a json array with that data for later parsing."
             "Polarity is either positive (0), negative (1) or neutral (2). Then, determine if the expression is implicit or explicit (True or False)."
             "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'."
             "Each entry represents an input sentence-aspect pair, indexed accordingly."
             "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...]"
             "Be sure to assess every single aspect term and that the length of your output is exactly the same as the length of the given sentence array and aspect array."
-            "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters."
-            "Ensure the output contains only this JSON array and no additional text.")
+            "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters. Do not add the word 'json' before you give the output!")
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
         try:
             # Check if any of the values are None
@@ -569,8 +566,6 @@ class genDataset:
 
             self.batch_generate_aspect_masks(self.index)
             self.batch_extract_polarity_implicitness(raw_batch_array, self.aspects)
-
-
 
             self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask, self.aspects, self.aspect_masks, self.polarity_implicitness)
             # ------------------------------------------
