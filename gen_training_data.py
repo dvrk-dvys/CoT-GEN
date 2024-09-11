@@ -458,11 +458,9 @@ class genDataset:
             "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters. Do not add the word 'json' before you give the output!")
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
         try:
-            # Check if any of the values are None
             if self.polarity_implicitness is None or self.aspects is None:
                 raise TypeError("One or both of the lists are NoneType and cannot be compared.")
 
-            # Check if the lengths of the lists match
             assert len(self.polarity_implicitness) == len(self.aspects), \
                 f"Length mismatch: polarity_implicitness ({len(self.polarity_implicitness)}) vs aspects ({len(self.aspects)})"
 
