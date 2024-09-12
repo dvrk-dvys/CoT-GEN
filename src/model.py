@@ -54,7 +54,7 @@ class LLMBackbone(nn.Module):
 
         for i, _ in enumerate(prompts):
             if (targets[i] not in _) and (targets[i] != 'None'):
-                # Concatenate the target word to the input sentence
+                # Concatenate the target word to the input sentence if its not present in the sentence
                 disembodied_head = _ + targets[i]  # + ' target: ' * target_word
                 prompts[i] = disembodied_head
                 #disembodied_head = self.tokenizer.decode(input_ids) + ' ' + targets[i]  # + ' target: ' * target_word

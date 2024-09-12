@@ -5,7 +5,8 @@ import numpy as np
 import torch.nn as nn
 import logging
 import socket
-
+import mlflow
+from mlflow.models import infer_signature
 
 from tqdm import tqdm
 from datetime import datetime
@@ -14,17 +15,9 @@ from collections import defaultdict
 from src.utils import nlp, ner_vocab, prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
 from IPython.display import display, clear_output
 
-#from torch.cuda.amp import autocast, GradScaler
-#scaler = GradScaler()
-#try:
-#    import google.colab
-#    in_colab = True
-#except ImportError:
-#    in_colab = False
-
 def is_colab():
     return 'COLAB_GPU' in os.environ or socket.gethostname().startswith('localhost')
-# Global Variable
+
 in_colab = is_colab()
 
 class PromptTrainer:
@@ -290,11 +283,8 @@ class ThorTrainer:
 
         implicits_list = implicits.tolist()
         implicit_labels = list(map(lambda i: "True" if i == 1 else "False", implicits_list))
-        #print(implicit_labels[0])
 
         inferred_targets = self.model.generate(**target_res)# ['WORK_OF_ART', 'WORK_OF_ART', 'WORK_OF_ART', 'PC', 'WORK_OF_ART', 'games', 'LANGUAGE', 'Sony', 'Software', 'LANGUAGE']
-        #approx_vector_weights = self.calc_approximate_vector_weights(inferred_targets, labeled_targets)
-
         inferred_targets = self.model.tokenizer.batch_encode_plus(inferred_targets, padding=True, return_tensors='pt',
                                                               max_length=self.config.max_length)
         inferred_targets = inferred_targets.data['input_ids']
@@ -317,18 +307,7 @@ class ThorTrainer:
         return target_res, approx_embeddings, target_embeddings, implicitness_res #, approx_vector_weights
 
     def prepare_step_one(self, **kwargs):
-        #'aspect_ids': batch_input['input_ids'],
-        #'aspect_masks': batch_input['attention_mask'],
-        #'context_A_ids': batch_contexts_A['input_ids'],
-
         aspect_ids, aspect_masks, context_A_ids = [kwargs[w] for w in 'input_ids, input_masks, context_A_ids'.strip().split(', ')]
-        #aspect
-        #targets = [self.model.tokenizer.decode(ids) for ids in aspect_ids]
-        #targets = [context.replace('<pad>', '').replace('</s>', '').strip() for context in targets]
-        #print(targets[0])
-        #contexts_A = [self.model.tokenizer.decode(ids) for ids in context_A_ids]
-        #contexts_A = [context.replace('<pad>', '').replace('</s>', '').strip() for context in contexts_A]
-        #print(contexts_A[0])
 
         res = {
             'input_ids': aspect_ids,
@@ -458,13 +437,8 @@ class ThorTrainer:
                 #'Given the sentence "the gray color was a good choice.", The mentioned aspect is about color. The opinion towards the mentioned aspect of BATTERY is The gray color was a good choice. The sentiment polarity is positive. Based on these contexts, summarize and return the sentiment polarity only, such as positive, neutral, or negative.'
                 step_label_data = self.prepare_sentiment_label(step_three_inferred_output, step_two_inferred_data, data)
 
-                #with autocast():
-
                 #****--------
                 target_loss = self.model(**target_label_data)
-                #approx_vector_tensor = torch.tensor(approx_vector_weights).to(target_loss.device)
-                #weights = 1 - approx_vector_tensor
-                #weighted_loss = target_loss * weights.mean()
 
                 cosine_similarity = nn.CosineSimilarity(dim=1)
                 similarity_scores = cosine_similarity(approx_embeddings, target_embeddings)
@@ -483,8 +457,6 @@ class ThorTrainer:
 
                 combined_loss = combined_loss / self.config.gradient_accumulation_steps
                 combined_loss.backward()
-                #scaler.step(self.config.optimizer)
-                #scaler.update()
                 #****--------
 
                 if (i + 1) % self.config.gradient_accumulation_steps == 0:
@@ -493,13 +465,9 @@ class ThorTrainer:
                     self.config.scheduler.step()
                     self.model.zero_grad()
 
-                #nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 description = "Epoch {}, loss:{:.4f}".format(self.global_epoch, np.mean(losses))
                 train_data.set_description(description)
 
-                #self.config.optimizer.step()
-                #self.config.scheduler.step()
-                #self.model.zero_grad()
             except RuntimeError as e:
                 if 'out of memory' in str(e):
                     print("Out of memory error caught. Switching to CPU.")

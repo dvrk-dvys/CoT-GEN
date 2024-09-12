@@ -86,7 +86,24 @@ class dataViewer:
                 StructField("contextual_mutual_information_score", DoubleType(), True),
                 StructField("contextual_surprisal", DoubleType(), True),
                 StructField("contextual_perplexity", DoubleType(), True),
-
+                StructField("input_ids", ArrayType(IntegerType(), True), True),
+                StructField("token_type_ids", ArrayType(IntegerType(), True), True),
+                StructField("attention_mask", ArrayType(IntegerType(), True), True),
+                StructField("spaCy_tokens", ArrayType(StringType(), True), True),
+                StructField("POS", ArrayType(StringType(), True), True),
+                StructField("POS_tags", ArrayType(StringType(), True), True),
+                StructField("entities", ArrayType(StringType(), True), True),
+                StructField("heads", ArrayType(StringType(), True), True),
+                StructField("labels", ArrayType(StringType(), True), True),
+                StructField("dependencies", ArrayType(StringType(), True), True),
+                StructField("negations", ArrayType(StringType(), True), True),
+                StructField("LDA_aspect_prob", StringType(), True),
+                StructField("aspectTerm", StringType(), True),
+                StructField("aspect_mask", ArrayType(IntegerType(), True), True),
+                StructField("implicitness", BooleanType(), True),
+                StructField("polarity", IntegerType(), True),
+                StructField("token_ids", ArrayType(IntegerType(), True), True),
+                StructField("raw_text", StringType(), True)
             ])
 
             self.parquet_df = (self.spark_session.read
@@ -131,45 +148,46 @@ class dataViewer:
 
     def config_data_vis(self, path):
         schema = StructType([
+            StructField("Comment", StringType(), True),
             StructField("Comment ID", StringType(), True),
             StructField("Reply to Which Comment", StringType(), True),
             StructField("User ID", StringType(), True),
             StructField("Username", StringType(), True),
             StructField("Nick Name", StringType(), True),
-            StructField("Comment", StringType(), True),
             StructField("Comment Time", StringType(), True),
             StructField("Digg Count", IntegerType(), True),
             StructField("Author Digged", StringType(), True),
             StructField("Reply Count", IntegerType(), True),
             StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
-            StructField("index", LongType(), True),
-            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
-            StructField("token_ids", ArrayType(IntegerType(), True), True),
-            StructField("token_type_ids", ArrayType(IntegerType(), True), True),
-            StructField("attention_mask", ArrayType(IntegerType(), True), True),
-            StructField("spaCy_tokens", StringType(), False),
-            StructField("POS", StringType(), False),
-            StructField("POS_tags", StringType(), False),
-            StructField("entities", StringType(), False),
-            StructField("heads", StringType(), False),
-            StructField("labels", StringType(), True),
-            StructField("dependencies", StringType(), False),
-            StructField("negations", StringType(), True),
-            StructField("LDA_aspects", StringType(), False),
-            StructField("raw_text", StringType(), True),
-            StructField("aspect", StringType(), True),
-            StructField("implicitness", BooleanType(), True),  # based on previous error message
-            StructField("polarity", IntegerType(), True),
             StructField("shannon_entropy", DoubleType(), True),
+            StructField("index", LongType(), True),
             StructField("mutual_information_score", DoubleType(), True),
             StructField("surprisal", DoubleType(), True),
             StructField("perplexity", DoubleType(), True),
             StructField("contextual_mutual_information_score", DoubleType(), True),
             StructField("contextual_surprisal", DoubleType(), True),
             StructField("contextual_perplexity", DoubleType(), True),
-            StructField("input_ids", StringType(), True),
+            StructField("input_ids", ArrayType(IntegerType(), True), True),
+            StructField("token_type_ids", ArrayType(IntegerType(), True), True),
+            StructField("attention_mask", ArrayType(IntegerType(), True), True),
+            StructField("spaCy_tokens", ArrayType(StringType(), True), True),
+            StructField("POS", ArrayType(StringType(), True), True),
+            StructField("POS_tags", ArrayType(StringType(), True), True),
+            StructField("entities", ArrayType(StringType(), True), True),
+            StructField("heads", ArrayType(StringType(), True), True),
+            StructField("labels", ArrayType(StringType(), True), True),
+            StructField("dependencies", ArrayType(StringType(), True), True),
+            StructField("negations", ArrayType(StringType(), True), True),
+            StructField("LDA_aspect_prob", StringType(), True),  # Updated to StringType as per the observed schema
+            StructField("aspectTerm", StringType(), True),
+            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
+            StructField("implicitness", BooleanType(), True),
+            StructField("polarity", IntegerType(), True),
+            StructField("token_ids", ArrayType(IntegerType(), True), True),
+            StructField("raw_text", StringType(), True)
         ])
+
 
         self.parquet_df = (self.spark_session.read
                            .schema(schema)
@@ -230,7 +248,7 @@ if __name__ == '__main__':
     old_preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl'
 
 
-    train_parquet_path = "/Users/jordanharris/Code/THOR-GEN/data/gen/train_dataframe.parquet"
+    train_parquet_path = "/Users/jordanharris/Code/CoT-GEN/data/gen/train_dataframe.parquet"
     old_parquet_path = "./data/gen/train_dataframe_old.parquet"
 
     tt_train = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'

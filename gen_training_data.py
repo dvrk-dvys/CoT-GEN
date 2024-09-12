@@ -233,7 +233,7 @@ class genDataset:
         ])
 
         self.isa_schema = StructType([
-            StructField("aspect", StringType(), True),
+            StructField("aspectTerm", StringType(), True),
             StructField("aspect_mask", ArrayType(IntegerType(), True), True),
             StructField("token_ids", ArrayType(IntegerType(), True), True),
             StructField("token_type_ids", ArrayType(IntegerType(), True), True),
@@ -282,7 +282,6 @@ class genDataset:
             StructField("polarity", IntegerType(), True),
             StructField("token_ids", ArrayType(IntegerType(), True), True),
             StructField("raw_text", StringType(), True)
-
         ])
 
         self.input_file_path = args.raw_file_path
@@ -443,6 +442,24 @@ class genDataset:
         )
         print('Initialize DF:')
         base_df.show(self.batch_size)
+
+        # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
+        raw_input_array = base_df.select(raw_text_column).rdd.flatMap(lambda x: x).collect()
+        if os.path.exists(self.output_file_path):
+            self.processed_df = self.spark_session.read.schema(self.final_schema).parquet(f"{self.output_file_path}")
+            print('The current parquet df length is: ', self.processed_df.count())
+            self.processed_df = self.processed_df.orderBy(desc(col("index")))
+            self.processed_df.show(self.batch_size)
+            self.processed_ids = self.processed_df.select(out_text_col).distinct().rdd.flatMap(lambda x: x).collect()
+            if base_df.count() <= self.processed_df.count():
+                self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
+                print(self.remaining_df.count(), ' Rows remaining')
+                self.remaining_df.show(self.batch_size, truncate=False)
+                return self.remaining_df, raw_input_array
+        else:
+            self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
+
+
         #------------------------------------------------------------------
         print('Calculating Scores...')
 
@@ -515,17 +532,14 @@ class genDataset:
         base_df.show(self.batch_size)
         #------------------------------------------------------------------
 
-        # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
-        raw_input_array = base_df.select(raw_text_column).rdd.flatMap(lambda x: x).collect()
-
-        if os.path.exists(self.output_file_path):
-            self.processed_df = self.spark_session.read.schema(self.final_schema).parquet(f"{self.output_file_path}")
-            print('The current parquet df length is: ', self.processed_df.count())
-            self.processed_df = self.processed_df.orderBy(desc(col("index")))
-            self.processed_df.show(self.batch_size)
-            self.processed_ids = self.processed_df.select(out_text_col).distinct().rdd.flatMap(lambda x: x).collect()
-        else:
-            self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
+        #if os.path.exists(self.output_file_path):
+        #    self.processed_df = self.spark_session.read.schema(self.final_schema).parquet(f"{self.output_file_path}")
+        #    print('The current parquet df length is: ', self.processed_df.count())
+        #    self.processed_df = self.processed_df.orderBy(desc(col("index")))
+        #    self.processed_df.show(self.batch_size)
+        #    self.processed_ids = self.processed_df.select(out_text_col).distinct().rdd.flatMap(lambda x: x).collect()
+        #else:
+        #    self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
 
         #!!!!!
         self.pre_nlp_df = (
@@ -632,57 +646,6 @@ class genDataset:
 
         token_nest_df = self.spark_session.createDataFrame(zip_data, schema)
 
-        print('Token Nest DF')
-        token_nest_df.show(n=5, truncate=False)
-        print('Orig Batch')
-        batch_df.show(n=5, truncate=False)
-        batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left").orderBy(desc(col("index")))
-        print('Joined Batch')
-        batch_df.show()
-        return batch_df
-
-    def old_prep_token_explode(self, batch_df, raw_batch_array):
-        lda_aspects_formatted = self.pre_nlp['LDA_aspect_prob'].apply(self.convert_lda_aspects)
-        zip_data = [
-            (
-                input_ids, token_type_ids, attention_mask, spaCy_tokens, pos, pos_tags, entities, heads, labels, dependencies, negations, lda_aspects, raw_input
-            )
-            for
-            input_ids, token_type_ids, attention_mask, spaCy_tokens, pos, pos_tags, entities, heads, labels, dependencies, negations, lda_aspects, raw_input
-            in zip(
-                self.bert_tokens.data['input_ids'],
-                self.bert_tokens.data['token_type_ids'],
-                self.bert_tokens.data['attention_mask'],
-                self.pre_nlp['spaCy_tokens'],
-                self.pre_nlp['POS'],
-                self.pre_nlp['POS_tags'],
-                self.pre_nlp['entities'],
-                self.pre_nlp['heads'],
-                self.pre_nlp['labels'],
-                self.pre_nlp['dependencies'],
-                self.pre_nlp['negations'],
-                lda_aspects_formatted,
-                raw_batch_array
-            )
-        ]
-
-        schema = StructType([
-            StructField('input_ids', ArrayType(IntegerType()), nullable=False),
-            StructField('token_type_ids', ArrayType(IntegerType()), nullable=False),
-            StructField('attention_mask', ArrayType(IntegerType()), nullable=False),
-            StructField('spaCy_tokens', ArrayType(StringType()), nullable=False),
-            StructField('POS', ArrayType(StringType()), nullable=False),
-            StructField('POS_tags', ArrayType(StringType()), nullable=False),
-            StructField('entities', ArrayType(StringType()), nullable=True),
-            StructField('heads', ArrayType(StringType()), nullable=False),
-            StructField('labels', ArrayType(StringType()), nullable=True),
-            StructField('dependencies', ArrayType(StringType()), nullable=False),
-            StructField('negations', ArrayType(StringType()), nullable=True),
-            StructField('LDA_aspect_prob', ArrayType(StringType()), nullable=False),
-            StructField(self.raw_text_col, StringType(), nullable=True),
-        ])
-
-        token_nest_df = self.spark_session.createDataFrame(zip_data, schema)
         print('Token Nest DF')
         token_nest_df.show(n=5, truncate=False)
         print('Orig Batch')
@@ -931,7 +894,7 @@ class genDataset:
             (col('a.' + 'Comment') == col('b.' + 'raw_text')) &
             (col('a.' + 'token_type_ids') == col('b.' + 'token_type_ids')) &
             (col('a.' + 'attention_mask') == col('b.' + 'attention_mask')) &
-            (col('a.' + 'aspectTerm') == col('b.' + 'aspect')),
+            (col('a.' + 'aspectTerm') == col('b.' + 'aspectTerm')),
             "left"
         ).select('a.*', 'b.aspect_mask', 'b.implicitness', 'b.polarity', 'b.token_ids', 'b.raw_text')
         #full_final_df = full_final_df.drop('raw_text')
@@ -940,7 +903,7 @@ class genDataset:
         full_final_df = full_final_df.orderBy(col("index").desc())
         print('Final batch DF')
         full_final_df.show()
-        full_final_df.printSchema()
+        #full_final_df.printSchema()
         return full_final_df
 
     def write_parquet_file(self, result_df, parquet_path):
@@ -956,7 +919,7 @@ class genDataset:
         result_df.printSchema()
         try:
             train_df = result_df.select(col('raw_text').alias('raw_texts'),
-                                        col('aspect').alias('raw_aspect_terms'),
+                                        col('aspectTerm').alias('raw_aspect_terms'),
                                         col('token_ids').alias('bert_tokens'),
                                         col('aspect_mask').alias('aspect_masks'),
                                         col('implicitness').alias('implicits'),
