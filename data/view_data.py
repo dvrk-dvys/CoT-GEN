@@ -148,29 +148,35 @@ class dataViewer:
 
     def config_data_vis(self, path):
         schema = StructType([
-            StructField("Comment", StringType(), True),
+            # TikTok Data
             StructField("Comment ID", StringType(), True),
             StructField("Reply to Which Comment", StringType(), True),
             StructField("User ID", StringType(), True),
             StructField("Username", StringType(), True),
             StructField("Nick Name", StringType(), True),
+            StructField("Comment", StringType(), True),
             StructField("Comment Time", StringType(), True),
             StructField("Digg Count", IntegerType(), True),
             StructField("Author Digged", StringType(), True),
             StructField("Reply Count", IntegerType(), True),
             StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
-            StructField("shannon_entropy", DoubleType(), True),
             StructField("index", LongType(), True),
+            # Information Theory Metrics
+            StructField("shannon_entropy", DoubleType(), True),
             StructField("mutual_information_score", DoubleType(), True),
             StructField("surprisal", DoubleType(), True),
             StructField("perplexity", DoubleType(), True),
             StructField("contextual_mutual_information_score", DoubleType(), True),
             StructField("contextual_surprisal", DoubleType(), True),
             StructField("contextual_perplexity", DoubleType(), True),
+            # Bert
             StructField("input_ids", ArrayType(IntegerType(), True), True),
+            StructField("token_ids", ArrayType(IntegerType(), True), True),
             StructField("token_type_ids", ArrayType(IntegerType(), True), True),
             StructField("attention_mask", ArrayType(IntegerType(), True), True),
+            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
+            # SpaCy
             StructField("spaCy_tokens", ArrayType(StringType(), True), True),
             StructField("POS", ArrayType(StringType(), True), True),
             StructField("POS_tags", ArrayType(StringType(), True), True),
@@ -180,12 +186,11 @@ class dataViewer:
             StructField("dependencies", ArrayType(StringType(), True), True),
             StructField("negations", ArrayType(StringType(), True), True),
             StructField("LDA_aspect_prob", StringType(), True),  # Updated to StringType as per the observed schema
+            # Inferences
+            StructField("raw_text", StringType(), True),
             StructField("aspectTerm", StringType(), True),
-            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
             StructField("implicitness", BooleanType(), True),
             StructField("polarity", IntegerType(), True),
-            StructField("token_ids", ArrayType(IntegerType(), True), True),
-            StructField("raw_text", StringType(), True)
         ])
 
 
@@ -230,7 +235,6 @@ class dataViewer:
         #    pickle.dump(data_dict, file)
 
 
-
     def outputArray(self):
         text = self.parquet_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
         return text
@@ -238,22 +242,22 @@ class dataViewer:
 
 if __name__ == '__main__':
 
-    laptops_train_v2_pkl_file = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/laptops/Laptops_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
-    laptops_test_gold_pkl_file = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/laptops/Laptops_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
-    debug_train_v2_pkl_file = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/debug/Debug_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
-    debug_test_gold_pkl_file = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/debug/Debug_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
+    laptops_train_v2_pkl_file = '/Users/jordanharris/Code/CoT-GEN/data/laptops/Laptops_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
+    laptops_test_gold_pkl_file = '/Users/jordanharris/Code/CoT-GEN/data/laptops/Laptops_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
+    debug_train_v2_pkl_file = '/Users/jordanharris/Code/CoT-GEN/data/debug/Debug_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
+    debug_test_gold_pkl_file = '/Users/jordanharris/Code/CoT-GEN/data/debug/Debug_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
 
-    preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/laptops_base_google-flan-t5-base.pkl'
-    preprocessed_restauraunts = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/restaurants_base_google-flan-t5-base.pkl'
-    old_preprocessed_laptops = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl'
+    preprocessed_laptops = '/Users/jordanharris/Code/CoT-GEN/data/preprocessed/laptops_base_google-flan-t5-base.pkl'
+    preprocessed_restauraunts = '/Users/jordanharris/Code/CoT-GEN/data/preprocessed/restaurants_base_google-flan-t5-base.pkl'
+    old_preprocessed_laptops = '/Users/jordanharris/Code/CoT-GEN/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl'
 
 
     train_parquet_path = "/Users/jordanharris/Code/CoT-GEN/data/gen/train_dataframe.parquet"
     old_parquet_path = "./data/gen/train_dataframe_old.parquet"
 
-    tt_train = '/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
+    tt_train = '/Users/jordanharris/Code/CoT-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
 
-    gen_csv = "/Users/jordanharris/Code/PycharmProjects/THOR-GEN/data/gen/manual_edits/gen_csv/"
+    gen_csv = "/Users/jordanharris/Code/PycharmProjects/CoT-GEN/data/gen/manual_edits/gen_csv/"
 
     viewer = dataViewer()
     viewer.config_data_vis(path=train_parquet_path)

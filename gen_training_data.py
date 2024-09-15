@@ -240,7 +240,8 @@ class genDataset:
             StructField("attention_mask", ArrayType(IntegerType(), True), True),
             StructField("implicitness", BooleanType(), True),
             StructField("polarity", IntegerType(), True),
-            StructField("raw_text", StringType(), True)
+            StructField("raw_text", StringType(), True),
+            StructField("index", LongType(), True)
         ])
 
         self.final_schema = StructType([
@@ -443,22 +444,13 @@ class genDataset:
         print('Initialize DF:')
         base_df.show(self.batch_size)
 
-        # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
-        raw_input_array = base_df.select(raw_text_column).rdd.flatMap(lambda x: x).collect()
-        if os.path.exists(self.output_file_path):
-            self.processed_df = self.spark_session.read.schema(self.final_schema).parquet(f"{self.output_file_path}")
-            print('The current parquet df length is: ', self.processed_df.count())
-            self.processed_df = self.processed_df.orderBy(desc(col("index")))
-            self.processed_df.show(self.batch_size)
-            self.processed_ids = self.processed_df.select(out_text_col).distinct().rdd.flatMap(lambda x: x).collect()
-            if base_df.count() <= self.processed_df.count():
-                self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
-                print(self.remaining_df.count(), ' Rows remaining')
-                self.remaining_df.show(self.batch_size, truncate=False)
-                return self.remaining_df, raw_input_array
-        else:
-            self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
-
+        self.pre_nlp_df = (
+            self.spark_session.createDataFrame(self.pre_nlp, self.pre_nlp_schema)
+            .orderBy([asc('comments'), desc(length(col('comments')))])
+            .withColumn("index", monotonically_increasing_id())  # Adding the 'index' column
+        ).orderBy(desc(col("index")))
+           # self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
+        #    self.remaining_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
 
         #------------------------------------------------------------------
         print('Calculating Scores...')
@@ -542,25 +534,53 @@ class genDataset:
         #    self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
 
         #!!!!!
-        self.pre_nlp_df = (
-            self.spark_session.createDataFrame(self.pre_nlp, self.pre_nlp_schema)
-            .orderBy([asc('comments'), desc(length(col('comments')))])
-            .withColumn("index", monotonically_increasing_id())  # Adding the 'index' column
-        ).orderBy(desc(col("index")))
-        print('Preprocessed NLP DF')
-        self.pre_nlp_df.show(self.batch_size)
-        print('Combined Base + PreNLP')
-        base_df.show(self.batch_size)
+
+        #test_base_df = base_df.filter(col("index") == 69)
+        #test_base_df.show(truncate=False)
+
+        print('Prenlp length: ',self.pre_nlp_df.count())
+
+        #print('Preprocessed NLP DF')
+        #self.pre_nlp_df.show(self.batch_size)
         # !!!!!
 
-        self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
+        #self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
         #------------------------------------------------------------------
         #self.remaining_df = self.remaining_df.orderBy(asc('comment'), length(col('Comment')).desc())
         #print('Ordered By Alpha Desc')
         #------------------------------------------------------------------
-        print(self.remaining_df.count(), ' Rows remaining')
-        self.remaining_df.show(self.batch_size, truncate=False)
-        return self.remaining_df, raw_input_array
+        #print(self.remaining_df.count(), ' Rows remaining')
+        #self.remaining_df.show(self.batch_size, truncate=False)
+
+
+
+
+        # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
+        raw_input_array = base_df.select(raw_text_column).rdd.flatMap(lambda x: x).collect()
+        if os.path.exists(self.output_file_path):
+
+
+            self.processed_df = self.spark_session.read.schema(self.final_schema).parquet(f"{self.output_file_path}")
+            print('The current parquet df length is: ', self.processed_df.count())
+            self.processed_df = self.processed_df.orderBy(desc(col("index")))
+            self.processed_df.show(self.batch_size)
+            self.processed_ids = self.processed_df.select(out_text_col).distinct().rdd.flatMap(lambda x: x).collect()
+            if base_df.count() >= self.processed_df.count():
+                self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids)) # ~ is a negation so is not in
+                self.pre_nlp_df = self.pre_nlp_df.filter(~col('comments').isin(self.processed_ids)) # ~ is a negation so is not in
+                self.remaining_df = self.remaining_df.orderBy(col("index").desc())
+                self.pre_nlp_df = self.pre_nlp_df.orderBy(col("index").desc())
+                print(self.remaining_df.count(), ' Rows remaining')
+                self.remaining_df.show(self.batch_size, truncate=False)
+                self.pre_nlp_df.show(self.batch_size, truncate=False)
+                return self.remaining_df, raw_input_array
+            else:
+                self.remaining_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
+                return self.remaining_df, raw_input_array
+
+        else:
+            self.remaining_df = base_df.orderBy(col("index").desc())
+            return base_df, raw_input_array
 
     """
     The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
@@ -588,21 +608,27 @@ class genDataset:
     def prep_token_explode(self, batch_df, raw_batch_array):
         #self.pre_nlp_df = self.pre_nlp_df.withColumn('LDA_aspect_prob', self.convert_lda_aspects(col('LDA_aspect_prob')))
         print('Pre NLP DF')
-        self.pre_nlp_df.show(n=5, truncate=False)
+        batch_comments = batch_df.select('Comment').distinct().rdd.flatMap(lambda x: x).collect()
+
+        self.pre_nlp_batch_df = self.pre_nlp_df.filter(col('comments').isin(batch_comments))
+        self.pre_nlp_batch_df.show()
+        print('Pre NLP Size: ', self.pre_nlp_batch_df.count())
+        print('Batch Size: ', batch_df.count())
 
         input_ids = self.bert_tokens.data['input_ids']
         token_type_ids = self.bert_tokens.data['token_type_ids']
         attention_masks = self.bert_tokens.data['attention_mask']
-        spaCy_tokens = self.pre_nlp_df.select('spaCy_tokens').rdd.flatMap(lambda x: x).collect()
-        pos = self.pre_nlp_df.select('POS').rdd.flatMap(lambda x: x).collect()
-        pos_tags = self.pre_nlp_df.select('POS_tags').rdd.flatMap(lambda x: x).collect()
-        entities = self.pre_nlp_df.select('entities').rdd.flatMap(lambda x: x).collect()
-        heads = self.pre_nlp_df.select('heads').rdd.flatMap(lambda x: x).collect()
-        labels = self.pre_nlp_df.select('labels').rdd.flatMap(lambda x: x).collect()
-        dependencies = self.pre_nlp_df.select('dependencies').rdd.flatMap(lambda x: x).collect()
-        negations = self.pre_nlp_df.select('negations').rdd.flatMap(lambda x: x).collect()
-        lda_aspects = self.pre_nlp_df.select('LDA_aspect_prob').rdd.flatMap(lambda x: x).collect()
+        spaCy_tokens = self.pre_nlp_batch_df.select('spaCy_tokens').rdd.flatMap(lambda x: x).collect()
+        pos = self.pre_nlp_batch_df.select('POS').rdd.flatMap(lambda x: x).collect()
+        pos_tags = self.pre_nlp_batch_df.select('POS_tags').rdd.flatMap(lambda x: x).collect()
+        entities = self.pre_nlp_batch_df.select('entities').rdd.flatMap(lambda x: x).collect()
+        heads = self.pre_nlp_batch_df.select('heads').rdd.flatMap(lambda x: x).collect()
+        labels = self.pre_nlp_batch_df.select('labels').rdd.flatMap(lambda x: x).collect()
+        dependencies = self.pre_nlp_batch_df.select('dependencies').rdd.flatMap(lambda x: x).collect()
+        negations = self.pre_nlp_batch_df.select('negations').rdd.flatMap(lambda x: x).collect()
+        lda_aspects = self.pre_nlp_batch_df.select('LDA_aspect_prob').rdd.flatMap(lambda x: x).collect()
         lda_aspects_formatted = self.convert_lda_aspects(lda_aspects)
+
 
         zip_data = [
             (
@@ -647,30 +673,36 @@ class genDataset:
         token_nest_df = self.spark_session.createDataFrame(zip_data, schema)
 
         print('Token Nest DF')
-        token_nest_df.show(n=5, truncate=False)
+        token_nest_df.show(n=self.batch_size, truncate=False)
         print('Orig Batch')
-        batch_df.show(n=5, truncate=False)
+        batch_df.show(n=self.batch_size, truncate=False)
         batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left").orderBy(desc(col("index")))
         print('Joined Batch')
         batch_df.show()
         return batch_df
 
+
+
+
+
+
     #  PySpark doesn't handle lists of lists automatically without a clear schema.
-    def explode_df(self, df, uuid, uuid_col_name, nests, flat_col_name, type):
+    @rest_after_run(sleep_seconds=4)
+    def explode_df(self, df, uuid, uuid_col_name, nests, exploded_col_name, type):
         if type == dict:
             prep_col = []
             for x in nests:
                 if isinstance(x, dict):
-                    if isinstance(x[flat_col_name], list):
-                        prep_col.append(x[flat_col_name])
+                    if isinstance(x[exploded_col_name], list):
+                        prep_col.append(x[exploded_col_name])
                     else:
-                        prep_col.append([x[flat_col_name]])
+                        prep_col.append([x[exploded_col_name]])
             zip_data = [(id, nest) for id, nest in zip(uuid, prep_col)]
-            nests = self.spark_session.createDataFrame(zip_data, [uuid_col_name, flat_col_name])
+            nests = self.spark_session.createDataFrame(zip_data, [uuid_col_name, exploded_col_name])
         elif type == list:
             schema = StructType([
                 StructField(uuid_col_name, StringType(), False),
-                StructField(flat_col_name, ArrayType(ArrayType(IntegerType())), True)
+                StructField(exploded_col_name, ArrayType(ArrayType(IntegerType())), True)
             ])
             zip_data = [(id, nest) for id, nest in zip(uuid, nests)]
             nests = self.spark_session.createDataFrame(zip_data, schema=schema)
@@ -678,10 +710,10 @@ class genDataset:
         unioned_df = df.join(nests, uuid_col_name, "left")
         print('Joined Batch + Aspects')
         unioned_df.show()
-        flat_df = unioned_df.withColumn(flat_col_name, explode(unioned_df[flat_col_name])).orderBy(desc(col("index")))
+        flat_df = unioned_df.withColumn(exploded_col_name, explode(unioned_df[exploded_col_name])).orderBy(desc(col("index")))
         print('Exploded DF')
         flat_df.show()
-        flat_list = flat_df.select(flat_col_name).rdd.flatMap(lambda x: x).collect()
+        flat_list = flat_df.select(exploded_col_name).rdd.flatMap(lambda x: x).collect()
         assert flat_df.count() == len(flat_list)
         return flat_list, flat_df
 
@@ -843,9 +875,9 @@ class genDataset:
             "When considering each sentence also assess all of the nlp spaCy features at the corresponding index. "
             f'The NLP features you will be looking at are the "{feature_set}" if applicable. '
             "In dependency parsing, 'heads' refer to the main words (or roots) of phrases that other words depend on, while 'dependencies' describe the grammatical relationships between these dependent words and their heads, such as subjects, objects, and modifiers. "
-            "Polarity is either positive (0), negative (1) or neutral (2). Then, determine if the expression is implicit or explicit (True or False). "
-            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'. "
-            "Each entry represents an input sentence-feature-aspect set, indexed accordingly. "
+            "Determine if the expression of the sentiment toward the aspect term is positive neutral or negative and that sentiment expression is implicit or explicit. "
+            "# The polarity values to choose from are {0:positive, 1:negative, 2:neutral}. If the expression is implicit, set 'implicitness' to BOOLEAN 'True'; if it is explicit, set 'implicitness' to BOOLEAN 'False'. "
+            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'. Each entry represents an input sentence-feature-aspect set, indexed accordingly. "
             "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...] "
             "Be sure to assess every single aspect term and that the length of your output is EXACTLY THE SAME as the length as the INPUT. "
             "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters. Do not add the word 'json' before you give the output!"
@@ -859,6 +891,7 @@ class genDataset:
             assert len(self.polarity_implicitness) == len(self.aspects), \
                 f"Length mismatch: polarity_implicitness ({len(self.polarity_implicitness)}) vs aspects ({len(self.aspects)})"
 
+            implicitness = [self.safe_strtobool(i['implicitness']) for i in self.polarity_implicitness]
         except (json.JSONDecodeError, AssertionError, TypeError, ValueError) as e:
             print("Error occurred:", str(e))
         return self.polarity_implicitness
@@ -878,7 +911,8 @@ class genDataset:
                 attention_mask=attention_masks[i],
                 implicitness=implicitness[i],
                 polarity=polarity[i],
-                raw_text=raw_text[i]
+                raw_text=raw_text[i],
+                index=self.index[i]
             )
             for i in range(len(aspect_terms))
         ]
@@ -887,25 +921,39 @@ class genDataset:
         final_train_df_columns = final_train_df.columns
         base_df_columns = self.base_df.columns
         batch_df_columns = self.batch_df.columns
+#
 
+        print('batch_df')
+        self.batch_df.show()
+        self.batch_df.cache()
+        print('final_train_df')
+        final_train_df.show()
+        final_train_df.cache()
+
+        #token_ids == input_ids
         full_final_df = self.batch_df.alias('a').join(
             final_train_df.alias('b'),
             (col('a.' + self.raw_text_col) == col('b.' + self.out_text_col)) &
-            (col('a.' + 'Comment') == col('b.' + 'raw_text')) &
-            (col('a.' + 'token_type_ids') == col('b.' + 'token_type_ids')) &
-            (col('a.' + 'attention_mask') == col('b.' + 'attention_mask')) &
+            (col('a.' + 'index') == col('b.' + 'index')) &
             (col('a.' + 'aspectTerm') == col('b.' + 'aspectTerm')),
             "left"
         ).select('a.*', 'b.aspect_mask', 'b.implicitness', 'b.polarity', 'b.token_ids', 'b.raw_text')
-        #full_final_df = full_final_df.drop('raw_text')
 
-        full_final_df = full_final_df.distinct()
-        full_final_df = full_final_df.orderBy(col("index").desc())
+        #full_final_df = full_final_df.alias('c').join(
+        #    self.base_df.alias('d'),
+        #    (col('c.' + self.raw_text_col) == col('d.' + self.raw_text_col)) &
+        #    (col('c.' + 'index') == col('d.' + 'index')),
+        #    "left"
+        #).select('c.*', 'd.mutual_information_score', 'd.surprisal', 'd.perplexity',
+        #         'd.contextual_mutual_information_score', 'd.contextual_surprisal', 'd.contextual_perplexity')
+
+        full_final_df = full_final_df.orderBy(col("a.index").desc())
         print('Final batch DF')
         full_final_df.show()
         #full_final_df.printSchema()
         return full_final_df
 
+    @rest_after_run(sleep_seconds=8)
     def write_parquet_file(self, result_df, parquet_path):
         print('Writing df to Parquet file. See data below.')
         result_df.show()
@@ -952,13 +1000,13 @@ class genDataset:
         # remaining_df = self.input_df
         while self.remaining_df.count() > 0:
             self.batch_df = self.remaining_df.limit(self.batch_size)
-
+            #!!!!SET REMAINING DF TO BE SAVED AS A PARQUET UNTIL ITS DONE THEN DELETE IT SO SCORES DONT HAVE TO CONSTANTLY BE RECALCULATED?
             # ------------------------------------------
-            print('test final df')
+            print('Batch DF')
             self.batch_df.show(self.batch_size)
-            raw_batch_array = self.batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
-            print('print raw batch array')
-            print(raw_batch_array)
+            raw_batch_array = self.batch_df.orderBy(col("index").desc()).select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
+            batch_index = self.batch_df.orderBy(col("index").desc()).select("index").rdd.flatMap(lambda x: x).collect()
+
             self.extract_text_tokens(raw_batch_array)
             nlp_feature_set = ['spaCy_tokens', 'POS', 'entities', 'labels', 'negations', 'LDA_aspect_prob']
             batch_nlp = self.nlp_batch_for_aspects(raw_batch_array, nlp_feature_set)
@@ -968,8 +1016,11 @@ class genDataset:
             # Bootle Neck
             self.aspects, self.batch_df = self.explode_df(self.batch_df, raw_batch_array, self.raw_text_col,
                                                           self.aspects, 'aspectTerm', dict)
+            self.batch_df.cache() #To avoid lazy evaluation isses that cause a mismatch you cache to force execution
+            print('The exploded batch df is now of size:', self.batch_df.count())
             # / Bootle Neck
 
+            # SpaCy Values
             self.index = self.batch_df.select('index').rdd.flatMap(lambda x: x).collect()
             raw_text = self.batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             input_ids = self.batch_df.select("input_ids").rdd.flatMap(lambda x: x).collect()
@@ -994,6 +1045,8 @@ class genDataset:
             self.write_parquet_file(self.processed_batch_df, self.output_file_path)
             self.processed_ids = self.processed_batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             self.remaining_df = self.remaining_df.filter(~self.remaining_df[self.raw_text_col].isin(self.processed_ids))
+            print('remaining df')
+
             self.remaining_df.show()
             print('batch finished')
         if not os.path.exists(self.output_pkl_path):

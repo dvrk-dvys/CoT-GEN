@@ -85,12 +85,14 @@ class dataViewer:
                 StructField("Pinned to Top", StringType(), True),
                 StructField("User Homepage", StringType(), True),
                 StructField("index", LongType(), True),
+
                 StructField("aspect_mask", ArrayType(IntegerType(), True), True),
                 StructField("token_ids", ArrayType(IntegerType(), True), True),
                 StructField("token_type_ids", ArrayType(IntegerType(), True), True),
                 StructField("attention_mask", ArrayType(IntegerType(), True), True),
-                StructField("raw_text", StringType(), True),
-                StructField("aspect", StringType(), True),
+
+                #StructField("raw_text", StringType(), True),
+                StructField("aspectTerm", StringType(), True),
                 StructField("implicitness", BooleanType(), True),  # based on previous error message
                 StructField("polarity", IntegerType(), True),
                 StructField("shannon_entropy", DoubleType(), True),
@@ -146,6 +148,7 @@ class dataViewer:
 
     def config_data_vis(self, path):
         schema = StructType([
+            # TikTok Data
             StructField("Comment ID", StringType(), True),
             StructField("Reply to Which Comment", StringType(), True),
             StructField("User ID", StringType(), True),
@@ -159,14 +162,28 @@ class dataViewer:
             StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
             StructField("index", LongType(), True),
-            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
+            # Bert
+            StructField("input_ids", ArrayType(IntegerType(), True), True),
             StructField("token_ids", ArrayType(IntegerType(), True), True),
             StructField("token_type_ids", ArrayType(IntegerType(), True), True),
             StructField("attention_mask", ArrayType(IntegerType(), True), True),
+            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
+            # SpaCy
+            StructField("spaCy_tokens", ArrayType(StringType(), True), True),
+            StructField("POS", ArrayType(StringType(), True), True),
+            StructField("POS_tags", ArrayType(StringType(), True), True),
+            StructField("entities", ArrayType(StringType(), True), True),
+            StructField("heads", ArrayType(StringType(), True), True),
+            StructField("labels", ArrayType(StringType(), True), True),
+            StructField("dependencies", ArrayType(StringType(), True), True),
+            StructField("negations", ArrayType(StringType(), True), True),
+            StructField("LDA_aspect_prob", StringType(), True),
+            # Inferences
             StructField("raw_text", StringType(), True),
-            StructField("aspect", StringType(), True),
+            StructField("aspectTerm", StringType(), True),
             StructField("implicitness", BooleanType(), True),  # based on previous error message
             StructField("polarity", IntegerType(), True),
+            # Information Theory Metrics
             StructField("shannon_entropy", DoubleType(), True),
             StructField("mutual_information_score", DoubleType(), True),
             StructField("surprisal", DoubleType(), True),
@@ -174,7 +191,6 @@ class dataViewer:
             StructField("contextual_mutual_information_score", DoubleType(), True),
             StructField("contextual_surprisal", DoubleType(), True),
             StructField("contextual_perplexity", DoubleType(), True),
-
         ])
 
         self.parquet_df = (self.spark_session.read
@@ -188,11 +204,18 @@ class dataViewer:
         print('The df length is: ', df_len)
         self.parquet_df.show(n=20, truncate=False)
 
+        test_df = self.parquet_df.filter(col("index") == 69)
+        print('TEST DF')
+        test_df.show(truncate=False)
+
+
         out_df = self.parquet_df.select("index", "Comment ID", "Reply to Which Comment", "User ID", "Username", "Nick Name",
-                                          "raw_text", "Comment Time", "Digg Count", "Author Digged", "Reply Count", "Pinned to Top", "aspect", "implicitness", "polarity",
+                                          "raw_text", "aspectTerm", "implicitness", "polarity",
                                           "shannon_entropy", "mutual_information_score", "surprisal", "perplexity",
-                                          "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity")
+                                          "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity",
+                                          "Comment Time", "Digg Count", "Author Digged", "Reply Count", "Pinned to Top")
         out_df = out_df.orderBy(
+            col("shannon_entropy").desc(),
             col("perplexity").desc(),
             col("surprisal").desc(),
             col("mutual_information_score").desc(),
@@ -246,7 +269,7 @@ class dataViewer:
             os.makedirs(directory)
 
         # Save the DataFrame to CSV
-        df.write.option("header", "true").csv(csv_path)
+        df.write.mode("overwrite").option("header", "true").csv(csv_path)
         print(f"Data saved to {csv_path}")
 
     def outputArray(self):
@@ -255,13 +278,14 @@ class dataViewer:
 
 
 if __name__ == '__main__':
-    train_parquet_path = "/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/gen/train_dataframe.parquet"
+    '/Users/jordanharris/Code/CoT-GEN/data/gen/train_dataframe.parquet'
+    train_parquet_path = "/Users/jordanharris/Code/CoT-GEN/data/gen/train_dataframe.parquet"
     old_parquet_path = "./data/gen/train_dataframe_old.parquet"
 
-    tt_train = '/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
-    gen_csv = "Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/gen/manual_edits/gen_csv/"
+    tt_train = '/Users/jordanharris/Code/CoT-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
+    gen_csv = "/Users/jordanharris/Code/CoT-GEN/data/gen/manual_edits/gen_csv/"
 
-    tt_path = "/Users/joergbln/Desktop/JAH/Code/THOR-GEN/data/raw/TTCommentExporter-7226101187500723498-201-comments.csv"
+    tt_path = "/Users/jordanharris/Code/CoT-GEN/data/raw/TTCommentExporter-7226101187500723498-201-comments.csv"
     tt_csv_path = "./gen/7226101187500723498-201-THORGEN.csv"
     parquet_viewer = dataViewer()
     out_df = parquet_viewer.config_data_vis(train_parquet_path)
