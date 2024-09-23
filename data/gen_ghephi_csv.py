@@ -3,7 +3,7 @@ import re
 import shutil
 
 from pyspark.sql import SparkSession, DataFrame, Row, Column
-from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
+from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank, when
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, ArrayType, LongType, DoubleType, TimestampType, BinaryType
 import stanza
@@ -58,16 +58,6 @@ class dataViewer:
         else:
             self.pkl_df = spark_df
 
-    #def clean_id_columns(self):
-    #    # Define a UDF to clean the columns by removing unwanted characters
-    #    clean_udf = udf(lambda x: ''.join(filter(str.isalnum, x)) if x else None, StringType())
-
-        # Apply the cleaning UDF to the specified columns
-    #    self.parquet_df = self.parquet_df.withColumn("Comment ID", clean_udf(col("Comment ID"))) \
-    #        .withColumn("Reply to Which Comment", clean_udf(col("Reply to Which Comment"))) \
-    #        .withColumn("User ID", clean_udf(col("User ID")))
-    #    self.parquet_df.show(n=10, truncate=False)
-
     def debug_datafile(self, path):
         if path.endswith('.parquet'):
 
@@ -108,7 +98,6 @@ class dataViewer:
             self.parquet_df = (self.spark_session.read
                           .schema(schema)
                           .parquet(path)
-                          # .withColumn("core_index", monotonically_increasing_id())
             )
 
             df_len = self.parquet_df.count()
@@ -137,12 +126,6 @@ class dataViewer:
                 col("contextual_mutual_information_score").desc(),
             )
 
-    #@udf(returnType=StringType())
-    #def remove_special_chars_udf(self, string_col):
-    #    if string_col is not None:
-    #        # Remove all non-digit characters and convert to long
-    #        return int(''.join(filter(str.isdigit, string_col)) or '0')
-    #    return None
     def clean_id_column(self, df, column_name):
         return df.withColumn(column_name, regexp_replace(col(column_name), r'[^0-9]', ''))
 
@@ -183,6 +166,8 @@ class dataViewer:
             StructField("aspectTerm", StringType(), True),
             StructField("implicitness", BooleanType(), True),  # based on previous error message
             StructField("polarity", IntegerType(), True),
+            StructField("reasoning", StringType(), True),
+
             # Information Theory Metrics
             StructField("shannon_entropy", DoubleType(), True),
             StructField("mutual_information_score", DoubleType(), True),
@@ -209,8 +194,8 @@ class dataViewer:
         test_df.show(truncate=False)
 
 
-        out_df = self.parquet_df.select("index", "Comment ID", "Reply to Which Comment", "User ID", "Username", "Nick Name",
-                                          "raw_text", "aspectTerm", "implicitness", "polarity",
+        out_df = self.parquet_df.select("Comment ID", "Reply to Which Comment", "User ID", "Username", #"Nick Name",
+                                          "raw_text", "aspectTerm", "implicitness", "polarity", "reasoning",
                                           "shannon_entropy", "mutual_information_score", "surprisal", "perplexity",
                                           "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity",
                                           "Comment Time", "Digg Count", "Author Digged", "Reply Count", "Pinned to Top")
@@ -224,11 +209,16 @@ class dataViewer:
             col("contextual_mutual_information_score").desc(),
         )
         out_df.show(n=20, truncate=False)
+        out_df = out_df.withColumn(
+            "Reply to Which Comment",
+            when(col("Reply to Which Comment").isNull() | (col("Reply to Which Comment") == ""), lit("0")).otherwise(
+                col("Reply to Which Comment"))
+        )
 
         # Clean and rename the specified columns
-        out_df = out_df.transform(lambda df: self.clean_id_column(df.withColumnRenamed("Comment ID", "Source"), "Source"))
+        out_df = out_df.transform(lambda df: self.clean_id_column(df.withColumnRenamed("Comment ID", "Target"), "Target"))
         out_df = out_df.transform(
-            lambda df: self.clean_id_column(df.withColumnRenamed("Reply to Which Comment", "Target"), "Target"))
+            lambda df: self.clean_id_column(df.withColumnRenamed("Reply to Which Comment", "Source"), "Source"))
         out_df = out_df.transform(lambda df: self.clean_id_column(df, "User ID"))
         #out_df = out_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
 
@@ -292,6 +282,9 @@ if __name__ == '__main__':
     parquet_viewer.save_to_csv(tt_csv_path, out_df)
 
     parquet_viewer.close_spark_session()
+
+
+    # ADD A ORIGINAL POST NODE!
 
     #id_string = "=""7226164124825158446"""
     #id_string = re.sub(r'[^a-zA-Z0-9]', '', id_string)
