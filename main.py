@@ -27,15 +27,12 @@ class Template:
 
         if torch.backends.mps.is_available():
             config.device = torch.device("mps")
-            mlflow.set_tag("device", "mps")
             print("MPS is available. Device: MPS")
         elif torch.cuda.is_available():
             config.device = torch.device("cuda")
-            mlflow.set_tag("device", "cuda")
             print("CUDA is available. Device:", torch.cuda.get_device_name(0))
         else:
             config.device = torch.device("cpu")
-            mlflow.set_tag("device", "cpu")
             print("CUDA & MPS is not available. Using CPU.")
 
         names = [config.model_size, config.dataname]
@@ -43,14 +40,6 @@ class Template:
         self.config = config
         self.start_epoch = 0
         self.best_score = 0
-
-        cwd = os.getcwd()
-
-        # define the relative path to the requirements.txt file
-        requirements_path = os.path.relpath('/dbfs/workspace/data/models/experiments/CoT-GEN_Experiment', start=cwd)
-
-        #mlflow.log_artifact(requirements_path)
-
 
         # Set Databricks environment variables
         if config.databricks_path and config.databricks_token:
@@ -89,6 +78,12 @@ class Template:
                 with mlflow.start_run():
                     mlflow.set_tag("data_name", config.data_name)
                     mlflow.set_tag("reasoning_mode", config.reasoning)
+                    mlflow.set_tag("device", config.device)
+                    cwd = os.getcwd()
+
+                    requirements_path = os.path.relpath('/dbfs/workspace/data/models/experiments/CoT-GEN_Experiment',
+                                                        start=cwd)
+                    mlflow.log_artifact(requirements_path)
             except Exception as e:
                 raise RuntimeError(f"Failed to configure MLflow: {e}")
         else:
