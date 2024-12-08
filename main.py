@@ -69,8 +69,8 @@ class Template:
                 #mlflow.set_experiment(experiment_rel_path)
 
                 print(mlflow.search_experiments())
-                mlflow.set_experiment(experiment_id=config.databricks_experiment_id)
-                #mlflow.set_experiment(config.databricks_experiment)
+                #mlflow.set_experiment(experiment_id=config.databricks_experiment_id)
+                mlflow.set_experiment(config.databricks_experiment)
                 print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
                 print(f"Experiment set: {mlflow.get_experiment_by_name(config.databricks_experiment)}")
 
