@@ -1,8 +1,9 @@
 import pickle
+import re
 import shutil
 
 from pyspark.sql import SparkSession, DataFrame, Row, Column
-from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank
+from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank, when
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, BooleanType, ArrayType, LongType, DoubleType, TimestampType, BinaryType
 import stanza
@@ -13,7 +14,10 @@ import sys
 import multiprocessing as mp
 import pandas as pd
 
-
+from pyspark.sql.functions import udf
+from pyspark.sql.types import StringType
+from pyspark.sql.functions import regexp_replace
+from pyspark.sql.functions import unix_timestamp, from_unixtime
 
 
 # # polarity_key = {0:positive, 1:negative, 2:neutral}
@@ -71,12 +75,14 @@ class dataViewer:
                 StructField("Pinned to Top", StringType(), True),
                 StructField("User Homepage", StringType(), True),
                 StructField("index", LongType(), True),
+
                 StructField("aspect_mask", ArrayType(IntegerType(), True), True),
                 StructField("token_ids", ArrayType(IntegerType(), True), True),
                 StructField("token_type_ids", ArrayType(IntegerType(), True), True),
                 StructField("attention_mask", ArrayType(IntegerType(), True), True),
-                StructField("raw_text", StringType(), True),
-                StructField("aspect", StringType(), True),
+
+                #StructField("raw_text", StringType(), True),
+                StructField("aspectTerm", StringType(), True),
                 StructField("implicitness", BooleanType(), True),  # based on previous error message
                 StructField("polarity", IntegerType(), True),
                 StructField("shannon_entropy", DoubleType(), True),
@@ -86,35 +92,18 @@ class dataViewer:
                 StructField("contextual_mutual_information_score", DoubleType(), True),
                 StructField("contextual_surprisal", DoubleType(), True),
                 StructField("contextual_perplexity", DoubleType(), True),
-                StructField("input_ids", ArrayType(IntegerType(), True), True),
-                StructField("token_type_ids", ArrayType(IntegerType(), True), True),
-                StructField("attention_mask", ArrayType(IntegerType(), True), True),
-                StructField("spaCy_tokens", ArrayType(StringType(), True), True),
-                StructField("POS", ArrayType(StringType(), True), True),
-                StructField("POS_tags", ArrayType(StringType(), True), True),
-                StructField("entities", ArrayType(StringType(), True), True),
-                StructField("heads", ArrayType(StringType(), True), True),
-                StructField("labels", ArrayType(StringType(), True), True),
-                StructField("dependencies", ArrayType(StringType(), True), True),
-                StructField("negations", ArrayType(StringType(), True), True),
-                StructField("LDA_aspect_prob", StringType(), True),
-                StructField("aspectTerm", StringType(), True),
-                StructField("aspect_mask", ArrayType(IntegerType(), True), True),
-                StructField("implicitness", BooleanType(), True),
-                StructField("polarity", IntegerType(), True),
-                StructField("token_ids", ArrayType(IntegerType(), True), True),
-                StructField("raw_text", StringType(), True)
+
             ])
 
             self.parquet_df = (self.spark_session.read
                           .schema(schema)
                           .parquet(path)
-                          # .withColumn("core_index", monotonically_increasing_id())
             )
 
             df_len = self.parquet_df.count()
             half_len = int(df_len / 2)
             print('The df length is: ', df_len)
+            self.clean_id_columns()
             self.parquet_df.show(n=20, truncate=False)
             #text = self.parquet_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
 
@@ -137,14 +126,8 @@ class dataViewer:
                 col("contextual_mutual_information_score").desc(),
             )
 
-    """
-    Comment|Comment ID|Reply to Which Comment| 
-    User ID|Username|Nick Name|Comment Time|Digg Count|Author Digged|Reply Count|Pinned to Top|
-    User Homepage|   shannon_entropy|index|mutual_information_score|surprisal|perplexity|
-    contextual_mutual_information_score|contextual_surprisal|contextual_perplexity|
-    input_ids|token_type_ids|attention_mask|spaCy_tokens|POS|POS_tags|entities|heads|labels|dependencies|
-       negations|         LDA_aspects|
-    """
+    def clean_id_column(self, df, column_name):
+        return df.withColumn(column_name, regexp_replace(col(column_name), r'[^0-9]', ''))
 
     def config_data_vis(self, path):
         schema = StructType([
@@ -162,14 +145,6 @@ class dataViewer:
             StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
             StructField("index", LongType(), True),
-            # Information Theory Metrics
-            StructField("shannon_entropy", DoubleType(), True),
-            StructField("mutual_information_score", DoubleType(), True),
-            StructField("surprisal", DoubleType(), True),
-            StructField("perplexity", DoubleType(), True),
-            StructField("contextual_mutual_information_score", DoubleType(), True),
-            StructField("contextual_surprisal", DoubleType(), True),
-            StructField("contextual_perplexity", DoubleType(), True),
             # Bert
             StructField("input_ids", ArrayType(IntegerType(), True), True),
             StructField("token_ids", ArrayType(IntegerType(), True), True),
@@ -185,14 +160,23 @@ class dataViewer:
             StructField("labels", ArrayType(StringType(), True), True),
             StructField("dependencies", ArrayType(StringType(), True), True),
             StructField("negations", ArrayType(StringType(), True), True),
-            StructField("LDA_aspect_prob", StringType(), True),  # Updated to StringType as per the observed schema
+            StructField("LDA_aspect_prob", StringType(), True),
             # Inferences
             StructField("raw_text", StringType(), True),
             StructField("aspectTerm", StringType(), True),
-            StructField("implicitness", BooleanType(), True),
+            StructField("implicitness", BooleanType(), True),  # based on previous error message
             StructField("polarity", IntegerType(), True),
-        ])
+            StructField("reasoning", StringType(), True),
 
+            # Information Theory Metrics
+            StructField("shannon_entropy", DoubleType(), True),
+            StructField("mutual_information_score", DoubleType(), True),
+            StructField("surprisal", DoubleType(), True),
+            StructField("perplexity", DoubleType(), True),
+            StructField("contextual_mutual_information_score", DoubleType(), True),
+            StructField("contextual_surprisal", DoubleType(), True),
+            StructField("contextual_perplexity", DoubleType(), True),
+        ])
 
         self.parquet_df = (self.spark_session.read
                            .schema(schema)
@@ -203,9 +187,43 @@ class dataViewer:
         df_len = self.parquet_df.count()
         half_len = int(df_len / 2)
         print('The df length is: ', df_len)
-        self.parquet_df.filter(self.parquet_df.spaCy_tokens.isNotNull()).show(n=5, truncate=False)
+        self.parquet_df.show(n=20, truncate=False)
 
-        #self.parquet_df.show(n=5, truncate=False)
+        test_df = self.parquet_df.filter(col("index") == 69)
+        print('TEST DF')
+        test_df.show(truncate=False)
+
+
+        out_df = self.parquet_df.select("Comment ID", "Reply to Which Comment", "User ID", "Username", #"Nick Name",
+                                          "raw_text", "aspectTerm", "implicitness", "polarity", "reasoning",
+                                          "shannon_entropy", "mutual_information_score", "surprisal", "perplexity",
+                                          "contextual_mutual_information_score", "contextual_surprisal", "contextual_perplexity",
+                                          "Comment Time", "Digg Count", "Author Digged", "Reply Count", "Pinned to Top")
+        out_df = out_df.orderBy(
+            col("shannon_entropy").desc(),
+            col("perplexity").desc(),
+            col("surprisal").desc(),
+            col("mutual_information_score").desc(),
+            col("contextual_perplexity").desc(),
+            col("contextual_surprisal").desc(),
+            col("contextual_mutual_information_score").desc(),
+        )
+        out_df.show(n=20, truncate=False)
+        out_df = out_df.withColumn(
+            "Reply to Which Comment",
+            when(col("Reply to Which Comment").isNull() | (col("Reply to Which Comment") == ""), lit("0")).otherwise(
+                col("Reply to Which Comment"))
+        )
+
+        # Clean and rename the specified columns
+        out_df = out_df.transform(lambda df: self.clean_id_column(df.withColumnRenamed("Comment ID", "Target"), "Target"))
+        out_df = out_df.transform(
+            lambda df: self.clean_id_column(df.withColumnRenamed("Reply to Which Comment", "Source"), "Source"))
+        out_df = out_df.transform(lambda df: self.clean_id_column(df, "User ID"))
+        #out_df = out_df.withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
+
+        out_df.show(truncate=False)
+        return out_df
 
 
     def savetoParquet(self, parquet_path, df):
@@ -234,6 +252,15 @@ class dataViewer:
         #with open(pkl_path, 'wb') as file:
         #    pickle.dump(data_dict, file)
 
+    def save_to_csv(self, csv_path, df):
+        # Check if the directory exists, if not, create it
+        directory = os.path.dirname(csv_path)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        # Save the DataFrame to CSV
+        df.write.mode("overwrite").option("header", "true").csv(csv_path)
+        print(f"Data saved to {csv_path}")
 
     def outputArray(self):
         text = self.parquet_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
@@ -241,83 +268,29 @@ class dataViewer:
 
 
 if __name__ == '__main__':
-
-    laptops_train_v2_pkl_file = '/Users/jordanharris/Code/CoT-GEN/data/laptops/Laptops_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
-    laptops_test_gold_pkl_file = '/Users/jordanharris/Code/CoT-GEN/data/laptops/Laptops_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
-    debug_train_v2_pkl_file = '/Users/jordanharris/Code/CoT-GEN/data/debug/Debug_Train_v2_Implicit_Labeled_preprocess_finetune.pkl'
-    debug_test_gold_pkl_file = '/Users/jordanharris/Code/CoT-GEN/data/debug/Debug_Test_Gold_Implicit_Labeled_preprocess_finetune.pkl'
-
-    preprocessed_laptops = '/Users/jordanharris/Code/CoT-GEN/data/preprocessed/laptops_base_google-flan-t5-base.pkl'
-    preprocessed_restauraunts = '/Users/jordanharris/Code/CoT-GEN/data/preprocessed/restaurants_base_google-flan-t5-base.pkl'
-    old_preprocessed_laptops = '/Users/jordanharris/Code/CoT-GEN/data/preprocessed/old_laptops_base_google-flan-t5-base.pkl'
-
-
+    '/Users/jordanharris/Code/CoT-GEN/data/gen/train_dataframe.parquet'
     train_parquet_path = "/Users/jordanharris/Code/CoT-GEN/data/gen/train_dataframe.parquet"
     old_parquet_path = "./data/gen/train_dataframe_old.parquet"
 
     tt_train = '/Users/jordanharris/Code/CoT-GEN/data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
+    gen_csv = "/Users/jordanharris/Code/CoT-GEN/data/gen/manual_edits/gen_csv/"
 
-    gen_csv = "/Users/jordanharris/Code/PycharmProjects/CoT-GEN/data/gen/manual_edits/gen_csv/"
+    tt_path = "/Users/jordanharris/Code/CoT-GEN/data/raw/TTCommentExporter-7226101187500723498-201-comments.csv"
+    tt_csv_path = "./gen/7226101187500723498-201-THORGEN.csv"
+    parquet_viewer = dataViewer()
+    out_df = parquet_viewer.config_data_vis(train_parquet_path)
+    parquet_viewer.save_to_csv(tt_csv_path, out_df)
 
-    viewer = dataViewer()
-    viewer.config_data_vis(path=train_parquet_path)
-
-
-
-
-
-
-
-#----------------------------------------------------------------------------
+    parquet_viewer.close_spark_session()
 
 
+    # ADD A ORIGINAL POST NODE!
+
+    #id_string = "=""7226164124825158446"""
+    #id_string = re.sub(r'[^a-zA-Z0-9]', '', id_string)
+    #print(id_string)
 
 
-
-
-    #pkl_viewer.read_datafile(laptops_train_v2_pkl_file)
-    #pkl_schema = StructType([
-    #    StructField('raw_texts', ArrayType(StringType(), True), True),
-    #    StructField('raw_aspect_terms', ArrayType(StringType(), True), True),
-    #    StructField('bert_tokens', ArrayType(IntegerType(), True), True),
-    #    StructField('aspect_masks', ArrayType(IntegerType(), True), True),
-    #    StructField('implicits', BooleanType(), True),
-    #    StructField('labels', IntegerType(), True)
-    #])
-#alternative to reading a pickel file
-    #pickleRdd = sc.pickleFile(filename).collect()
-    #df2 = spark.createDataFrame(pickleRdd)
-    #df = pkl_viewer.load_pkl_to_df(laptops_test_gold_pkl_file, pkl_schema, out=True)
-
-    #debug_row_df = df.filter(col('raw_texts')[0] == 'the gray color was a good choice.')
-
-    #rest_df = df.filter(col('raw_texts')[0] != 'the gray color was a good choice.')
-
-    #combined_df = debug_row_df.union(rest_df)
-    #combined_df.show(20, truncate=False)
-
-    #small_df = combined_df.distinct().limit(20)  # Use limit instead of head to get a DataFrame
-    #small_df.show()
-
-    #raw_texts = [row['raw_texts'][0] for row in small_df.select('raw_texts').collect()]
-    #raw_aspect_terms = [row['raw_aspect_terms'][0] for row in small_df.select('raw_aspect_terms').collect()]
-    #bert_tokens = [row['bert_tokens'] for row in small_df.select('bert_tokens').collect()]
-    #aspect_masks = [row['aspect_masks'] for row in small_df.select('aspect_masks').collect()]
-    #implicits = [row['implicits'] for row in small_df.select('implicits').collect()]
-    #labels = [row['labels'] for row in small_df.select('labels').collect()]
-
-    #data_dict = {
-    #    'raw_texts': raw_texts,
-    #    'raw_aspect_terms': raw_aspect_terms,
-    #    'bert_tokens': bert_tokens,
-    #    'aspect_masks': aspect_masks,
-    #    'implicits': implicits,
-    #    'labels': labels
-    #}
-
-
-    #pkl_viewer.savetoPKL(debug_test_gold_pkl_file, data_dict)
-    #pkl_viewer.close_spark_session()
 
     #parquet_viewer.read_datafile(laptops_test_gold_pkl_file)
     #text_col = parquet_viewer.outputArray()
