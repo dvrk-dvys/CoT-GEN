@@ -53,10 +53,6 @@ class Template:
         if config.databricks_mlflow:
             try:
                 mlflow.set_tracking_uri("databricks")
-                #experiment_abs_path = config.databricks_experiment  # e.g., "/data/models/experiments/CoT-GEN_Experiment"
-                #experiment_rel_path = os.path.relpath(experiment_abs_path, start=os.getcwd())
-                #mlflow.set_experiment(experiment_rel_path)
-
                 print(mlflow.search_experiments())
                 #mlflow.set_experiment(experiment_id=config.databricks_experiment_id)
                 mlflow.set_experiment(config.databricks_experiment)
@@ -74,13 +70,13 @@ class Template:
                     except mlflow.exceptions.RestException as e:
                         print(f"Failed to end stale run: {e}")
                         mlflow.tracking.fluent._active_run_stack = []
-
+                print('testingggggggg----------------------------------')
                 with mlflow.start_run():
                     mlflow.set_tag("data_name", config.data_name)
                     mlflow.set_tag("reasoning_mode", config.reasoning)
                     mlflow.set_tag("device", config.device)
-                    requirements_path = os.path.relpath('/CoT-GEN/requirements.txt')
-                    mlflow.log_artifact(requirements_path)
+                    #requirements_path = os.path.relpath('/CoT-GEN/requirements.txt')
+                    #mlflow.log_artifact(requirements_path)
             except Exception as e:
                 raise RuntimeError(f"Failed to configure MLflow: {e}")
         else:
