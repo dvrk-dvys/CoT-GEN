@@ -1,0 +1,15 @@
+artifact_uri: mlflow-artifacts:/0/5ca678d78a2a456d9360de75b491acf9/artifacts
+end_time: null
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 5ca678d78a2a456d9360de75b491acf9
+run_name: capable-auk-759
+run_uuid: 5ca678d78a2a456d9360de75b491acf9
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1733672731730
+status: 1
+tags: []
+user_id: jordanharris

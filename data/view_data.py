@@ -13,9 +13,6 @@ import sys
 import multiprocessing as mp
 import pandas as pd
 
-
-
-
 # # polarity_key = {0:positive, 1:negative, 2:neutral}
 
 class dataViewer:
@@ -264,10 +261,6 @@ if __name__ == '__main__':
 
 
 
-
-
-
-
 #----------------------------------------------------------------------------
 
 
@@ -275,49 +268,49 @@ if __name__ == '__main__':
 
 
 
-    #pkl_viewer.read_datafile(laptops_train_v2_pkl_file)
-    #pkl_schema = StructType([
-    #    StructField('raw_texts', ArrayType(StringType(), True), True),
-    #    StructField('raw_aspect_terms', ArrayType(StringType(), True), True),
-    #    StructField('bert_tokens', ArrayType(IntegerType(), True), True),
-    #    StructField('aspect_masks', ArrayType(IntegerType(), True), True),
-    #    StructField('implicits', BooleanType(), True),
-    #    StructField('labels', IntegerType(), True)
-    #])
+    #viewer.read_datafile(laptops_train_v2_pkl_file)
+    pkl_schema = StructType([
+        StructField('raw_texts', ArrayType(StringType(), True), True),
+        StructField('raw_aspect_terms', ArrayType(StringType(), True), True),
+        StructField('bert_tokens', ArrayType(IntegerType(), True), True),
+        StructField('aspect_masks', ArrayType(IntegerType(), True), True),
+        StructField('implicits', BooleanType(), True),
+        StructField('labels', IntegerType(), True)
+    ])
 #alternative to reading a pickel file
     #pickleRdd = sc.pickleFile(filename).collect()
     #df2 = spark.createDataFrame(pickleRdd)
-    #df = pkl_viewer.load_pkl_to_df(laptops_test_gold_pkl_file, pkl_schema, out=True)
-
-    #debug_row_df = df.filter(col('raw_texts')[0] == 'the gray color was a good choice.')
-
-    #rest_df = df.filter(col('raw_texts')[0] != 'the gray color was a good choice.')
-
-    #combined_df = debug_row_df.union(rest_df)
-    #combined_df.show(20, truncate=False)
-
-    #small_df = combined_df.distinct().limit(20)  # Use limit instead of head to get a DataFrame
-    #small_df.show()
-
-    #raw_texts = [row['raw_texts'][0] for row in small_df.select('raw_texts').collect()]
-    #raw_aspect_terms = [row['raw_aspect_terms'][0] for row in small_df.select('raw_aspect_terms').collect()]
-    #bert_tokens = [row['bert_tokens'] for row in small_df.select('bert_tokens').collect()]
-    #aspect_masks = [row['aspect_masks'] for row in small_df.select('aspect_masks').collect()]
-    #implicits = [row['implicits'] for row in small_df.select('implicits').collect()]
-    #labels = [row['labels'] for row in small_df.select('labels').collect()]
-
-    #data_dict = {
-    #    'raw_texts': raw_texts,
-    #    'raw_aspect_terms': raw_aspect_terms,
-    #    'bert_tokens': bert_tokens,
-    #    'aspect_masks': aspect_masks,
-    #    'implicits': implicits,
-    #    'labels': labels
-    #}
+    #df = viewer.load_pkl_to_df(laptops_train_v2_pkl_file, pkl_schema, out=True)
+    df = viewer.load_pkl_to_df(laptops_test_gold_pkl_file, pkl_schema, out=True)
 
 
-    #pkl_viewer.savetoPKL(debug_test_gold_pkl_file, data_dict)
-    #pkl_viewer.close_spark_session()
+    debug_row_df = df.filter(col('raw_texts')[0] == 'the gray color was a good choice.')
+    rest_df = df.filter(col('raw_texts')[0] != 'the gray color was a good choice.')
+
+    combined_df = debug_row_df.union(rest_df)
+    combined_df.show(20, truncate=False)
+
+    small_df = combined_df.distinct().limit(25)  # Use limit instead of head to get a DataFrame
+    small_df.show()
+
+    raw_texts = [row['raw_texts'][0] for row in small_df.select('raw_texts').collect()]
+    raw_aspect_terms = [row['raw_aspect_terms'][0] for row in small_df.select('raw_aspect_terms').collect()]
+    bert_tokens = [row['bert_tokens'] for row in small_df.select('bert_tokens').collect()]
+    aspect_masks = [row['aspect_masks'] for row in small_df.select('aspect_masks').collect()]
+    implicits = [row['implicits'] for row in small_df.select('implicits').collect()]
+    labels = [row['labels'] for row in small_df.select('labels').collect()]
+
+    data_dict = {
+        'raw_texts': raw_texts,
+        'raw_aspect_terms': raw_aspect_terms,
+        'bert_tokens': bert_tokens,
+        'aspect_masks': aspect_masks,
+        'implicits': implicits,
+        'labels': labels
+    }
+
+    viewer.savetoPKL(debug_test_gold_pkl_file, data_dict)
+    viewer.close_spark_session()
 
     #parquet_viewer.read_datafile(laptops_test_gold_pkl_file)
     #text_col = parquet_viewer.outputArray()
