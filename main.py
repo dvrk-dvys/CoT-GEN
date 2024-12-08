@@ -68,6 +68,8 @@ class Template:
                 #experiment_rel_path = os.path.relpath(experiment_abs_path, start=os.getcwd())
                 #mlflow.set_experiment(experiment_rel_path)
                 mlflow.set_experiment(config.databricks_experiment)
+                print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
+                print(f"Experiment set: {mlflow.get_experiment_by_name(config.databricks_experiment)}")
 
                 if mlflow.active_run():
                     active_run = mlflow.active_run()
@@ -84,7 +86,6 @@ class Template:
                 with mlflow.start_run():
                     mlflow.set_tag("data_name", config.data_name)
                     mlflow.set_tag("reasoning_mode", config.reasoning)
-                    print(f"MLflow experiment set to: {config.databricks_experiment}")
             except Exception as e:
                 raise RuntimeError(f"Failed to configure MLflow: {e}")
         else:
@@ -146,8 +147,8 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
     parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
     parser.add_argument('-db_mlflow', '--databricks_mlflow', default=True)
-    parser.add_argument('-db_path', '--databricks_path', help='databricks url')
-    parser.add_argument('-db_token', '--databricks_token', help='databricks path')
+    parser.add_argument('-db_path', '--databricks_path', default='https://adb-958040179716700.0.azuredatabricks.net', help='databricks url')
+    parser.add_argument('-db_token', '--databricks_token', default='', help='databricks path')
     parser.add_argument('-db_experiment', '--databricks_experiment', default="/CoT-GEN_Experiment", help='databricks experiment path') #"/data/models/experiments/CoT-GEN_Experiment"
 
     args = parser.parse_args()
