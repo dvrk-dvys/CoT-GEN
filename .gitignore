@@ -11,7 +11,7 @@ data/wikiextractor/
 *.wav
 *.zip
 *.flac
-*.txt
+#*.txt
 *.png
 *.csv
 *.zip
