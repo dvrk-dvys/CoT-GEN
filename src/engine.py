@@ -194,17 +194,18 @@ class ThorTrainer:
             if score > best_score:
                 best_score, best_iter = score, epoch
 
-                state_dict_path = "mlruns/models/best_model_state.pth"
-                torch.save(self.model.state_dict(), state_dict_path)
-                model_to_log = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
+                #state_dict_path = "mlruns/models/best_model_state.pth"
+                #model_to_log = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
                 #mlflow.pytorch.log_model(
                 #    model_to_log,
                 #    artifact_path="mlruns/models/best_model_state.pth",
                 #    registered_model_name="cot_gen_model"
                 #)
 
-                torch.save(self.model.state_dict(), state_dict_path)
-
+                model_to_log = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
+                state_dict_path = "/tmp/best_model_state.pth"  # Use a temporary local path
+                torch.save(model_to_log.state_dict(), state_dict_path)
+                #torch.save(self.model.state_dict(), state_dict_path)
                 mlflow.log_artifact(state_dict_path, artifact_path="models")
 
                 mlflow.set_tag("best_epoch", epoch)
