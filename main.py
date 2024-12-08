@@ -67,7 +67,10 @@ class Template:
                 #experiment_abs_path = config.databricks_experiment  # e.g., "/data/models/experiments/CoT-GEN_Experiment"
                 #experiment_rel_path = os.path.relpath(experiment_abs_path, start=os.getcwd())
                 #mlflow.set_experiment(experiment_rel_path)
-                mlflow.set_experiment(config.databricks_experiment)
+
+                print(mlflow.search_experiments())
+                mlflow.set_experiment(experiment_id=config.databricks_experiment_id)
+                #mlflow.set_experiment(config.databricks_experiment)
                 print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
                 print(f"Experiment set: {mlflow.get_experiment_by_name(config.databricks_experiment)}")
 
@@ -150,6 +153,7 @@ if __name__ == '__main__':
     parser.add_argument('-db_path', '--databricks_path', default='https://adb-958040179716700.0.azuredatabricks.net', help='databricks url')
     parser.add_argument('-db_token', '--databricks_token', default='', help='databricks path')
     parser.add_argument('-db_experiment', '--databricks_experiment', default="/CoT-GEN_Experiment", help='databricks experiment path') #"/data/models/experiments/CoT-GEN_Experiment"
+    parser.add_argument('-db_experiment_id', '--databricks_experiment_id', help='databricks experiment id') #"/data/models/experiments/CoT-GEN_Experiment"
 
     args = parser.parse_args()
     template = Template(args)
