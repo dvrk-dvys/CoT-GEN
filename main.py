@@ -79,10 +79,7 @@ class Template:
                     mlflow.set_tag("data_name", config.data_name)
                     mlflow.set_tag("reasoning_mode", config.reasoning)
                     mlflow.set_tag("device", config.device)
-                    cwd = os.getcwd()
-
-                    requirements_path = os.path.relpath('/dbfs/workspace/data/models/experiments/CoT-GEN_Experiment',
-                                                        start=cwd)
+                    requirements_path = os.path.relpath('/CoT-GEN/requirements.txt')
                     mlflow.log_artifact(requirements_path)
             except Exception as e:
                 raise RuntimeError(f"Failed to configure MLflow: {e}")
