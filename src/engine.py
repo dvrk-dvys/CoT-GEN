@@ -194,18 +194,14 @@ class ThorTrainer:
             if score > best_score:
                 best_score, best_iter = score, epoch
 
-                #state_dict_path = "mlruns/models/best_model_state.pth"
-                #model_to_log = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
-                #mlflow.pytorch.log_model(
-                #    model_to_log,
-                #    artifact_path="mlruns/models/best_model_state.pth",
-                #    registered_model_name="cot_gen_model"
-                #)
+                if "DATABRICKS_RUNTIME_VERSION" in os.environ:  # Running in Databricks
+                    state_dict_path = "/tmp/best_model_state.pth"
+                else:  # Running locally
+                    state_dict_path = "mlruns/models/best_model_state.pth"
+                    os.makedirs(os.path.dirname(state_dict_path), exist_ok=True)
 
                 model_to_log = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
-                state_dict_path = "/tmp/best_model_state.pth"  # Use a temporary local path
                 torch.save(model_to_log.state_dict(), state_dict_path)
-                #torch.save(self.model.state_dict(), state_dict_path)
                 mlflow.log_artifact(state_dict_path, artifact_path="models")
 
                 mlflow.set_tag("best_epoch", epoch)
