@@ -173,6 +173,7 @@ class ThorTrainer:
         for epoch in tqdm(range(self.start_epoch, self.config.epoch_size)):
             self.model.global_epoch = epoch
             self.global_epoch = epoch
+            self.model.to(self.config.device)
             self.train_step()
             result = self.evaluate_step(mode='valid')
             self.re_init()
