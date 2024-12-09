@@ -6,7 +6,7 @@ import pickle as pkl
 import argparse
 
 from src.preprocess_utils import NLPTextAnalyzer, parse_arguments
-from src.utils import nlp, prompt_for_target_inferring, prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring, prompt_for_implicitness_inferring
+from src.utils import get_nlp_model, prompt_for_target_inferring, prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring, prompt_for_implicitness_inferring
 from transformers import AutoTokenizer
 from torch.utils.data import Dataset, DataLoader
 import mlflow
@@ -29,7 +29,7 @@ class MyDataset(Dataset):
 class MyDataLoader:
     def __init__(self, config):
         self.config = config
-        config.preprocessor = Preprocessor(config)
+        config.preprocessor = None
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_path)
 
     def worker_init(self, worked_id):
@@ -48,18 +48,19 @@ class MyDataLoader:
             self.data = pkl.load(open(path, 'rb'))
             mlflow.log_param("data_source", "cached")
         else:
+            self.preprocessor = Preprocessor(self.config)
             self.data = self.config.preprocessor.forward()
             pkl.dump(self.data, open(path, 'wb'))
-            mlflow.log_param("data_source", "preprocessed")
-            mlflow.log_artifact(path, artifact_path="preprocessed_data")
+            #mlflow.log_param("data_source", "preprocessed")
+            #mlflow.log_artifact(path, artifact_path="preprocessed_data")
             # --------- Save to Drive
-            try:
-                colab_path = os.path.join(self.config.preprocess_dir_colab,
-                                    '{}_{}_{}.pkl'.format(cfg.data_name, cfg.model_size, cfg.model_path).replace('/', '-'))
-                pkl.dump(self.data, open(colab_path, 'wb'))
-                print('PREPROCESSED DATA SAVED:', colab_path)
-            except:
-                print('Failed to save preprocessed data to drive!')
+            #try:
+            #    colab_path = os.path.join(self.config.preprocess_dir_colab,
+            #                        '{}_{}_{}.pkl'.format(cfg.data_name, cfg.model_size, cfg.model_path).replace('/', '-'))
+            #    pkl.dump(self.data, open(colab_path, 'wb'))
+            #    print('PREPROCESSED DATA SAVED:', colab_path)
+            #except:
+            #    print('Failed to save preprocessed data to drive!')
                 #--------- Save to Drive
 
         preprocess_time = time.time() - start_time
@@ -271,7 +272,9 @@ class Preprocessor:
             deprel = nlp_data[i]['deprel_list']
             #ner = nlp_data[i]['ner_list']
 
+            nlp = get_nlp_model()
             doc = nlp(text)
+
             ner = [(ent.text, ent.label_, ent.start_char, ent.end_char) for ent in doc.ents]
 
             #res.append([text, target, label, implicit])

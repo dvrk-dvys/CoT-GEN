@@ -70,7 +70,6 @@ class Template:
                     except mlflow.exceptions.RestException as e:
                         print(f"Failed to end stale run: {e}")
                         mlflow.tracking.fluent._active_run_stack = []
-                print('testingggggggg----------------------------------')
                 with mlflow.start_run():
                     mlflow.set_tag("data_name", config.data_name)
                     mlflow.set_tag("reasoning_mode", config.reasoning)
@@ -133,7 +132,7 @@ if __name__ == '__main__':
                         help='with one-step prompt or multi-step thor reasoning')
     parser.add_argument('-z', '--zero_shot', action='store_true', default=False,
                         help='running under zero-shot mode or fine-tune mode')
-    parser.add_argument('-d', '--data_name', default='debug', choices=['restaurants', 'laptops', 'debug'],
+    parser.add_argument('-d', '--data_name', default='laptops', choices=['restaurants', 'laptops', 'debug'],
                         help='semeval data name')
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
     parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
@@ -147,5 +146,3 @@ if __name__ == '__main__':
     template = Template(args)
     template.forward()
 
-
-#REVERT TO 18:01

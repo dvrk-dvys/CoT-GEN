@@ -18,9 +18,12 @@ class NLPTextAnalyzer:
     def __init__(self, arg):
         if arg == 'stanza':
             stanza.download('en')
-            self.stanza_pipe = stanza.Pipeline('en', use_gpu=True)
+            self.stanza_pipe = stanza.Pipeline('en', use_gpu=False) #false saves data to disk and doesnt use memory too fast
         if arg == 'spacy':
-           self.nlp = spacy.load("en_core_web_lg")
+           try:
+               self.nlp = spacy.load("en_core_web_md", disable=["ner", "parser", "textcat"])
+           except OSError:
+               raise RuntimeError("The SpaCy model 'en_core_web_md' is not installed. Please install it manually.")
         if arg == 'nltk':
             nltk.download('stopwords')
             nltk.download('punkt')

@@ -7,10 +7,14 @@ from transformers import get_linear_schedule_with_warmup
 from functools import wraps
 import time
 import spacy.cli
-spacy.cli.download("en_core_web_lg")
-import spacy
-nlp = spacy.load("en_core_web_lg")
+spacy.cli.download("en_core_web_md") #en_core_web_md en_core_web_lg
+#nlp = spacy.load("en_core_web_md", disable=["ner", "parser", "textcat"])
 
+from functools import lru_cache
+
+@lru_cache(maxsize=None)
+def get_nlp_model():
+    return spacy.load("en_core_web_md", disable=["ner", "parser", "textcat"])
 
 upos_vocab = {
     'ADJ': 1, 'ADP': 2, 'ADV': 3, 'AUX': 4, 'CCONJ': 5, 'DET': 6,

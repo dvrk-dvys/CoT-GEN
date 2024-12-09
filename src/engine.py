@@ -12,8 +12,10 @@ from tqdm import tqdm
 from datetime import datetime
 from sklearn.metrics import accuracy_score, f1_score
 from collections import defaultdict
-from src.utils import nlp, ner_vocab, prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
+from src.utils import get_nlp_model, ner_vocab, prompt_for_opinion_inferring, prompt_for_polarity_inferring, prompt_for_polarity_label
 from IPython.display import display, clear_output
+import spacy
+
 
 def is_colab():
     return 'COLAB_GPU' in os.environ or socket.gethostname().startswith('localhost')
@@ -145,7 +147,6 @@ class PromptTrainer:
                 res[k] = round(v * 100, 3)
         return res
 
-
 class ThorTrainer:
     def __init__(self, model, config, train_loader, valid_loader, test_loader, start_epoch=0, best_score=0) -> None:
         self.model = model
@@ -261,8 +262,8 @@ class ThorTrainer:
         #for approx in approximations:
         #similarities[approx] = self.nlp(approx).similarity(self.nlp(target))
         #max(similarities, key=similarities.get)
-        test = nlp(approximation).similarity(nlp(target))
-        return test
+        nlp = get_nlp_model()
+        return nlp(approximation).similarity(nlp(target))
 
     def calc_approximate_vector_weights(self, approximations, targets):
         # approximate_targets = ['ONE', 'LANGUAGE', 'PRODUCT', 'None', 'NONE', 'EVENT', 'None', 'None', 'NONE', 'NONE']
