@@ -430,6 +430,8 @@ class ThorTrainer:
         losses = []
 
         for i, data in enumerate(train_data):
+            data = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v for k, v in data.items()}
+
             try:
                 #****--------
                 target_label_data, approx_embeddings, target_embeddings, implicitness_label_data = self.prepare_step_zero(**data)
@@ -500,6 +502,9 @@ class ThorTrainer:
                             data[data_key] = data[data_key].to(self.config.device)
                 else:
                     raise e
+
+        self.model.to(self.config.device)
+        optimizer_to(self.config.optimizer, self.config.device)
         if len(train_data) % self.config.gradient_accumulation_steps != 0:
             nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
             self.config.optimizer.step()
