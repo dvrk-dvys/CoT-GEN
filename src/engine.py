@@ -202,7 +202,7 @@ class ThorTrainer:
                     os.makedirs(os.path.dirname(state_dict_path), exist_ok=True)
 
                 model_to_log = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
-                torch.save(model_to_log.state_dict(), state_dict_path)
+                #torch.save(model_to_log.state_dict(), state_dict_path)
                 mlflow.log_artifact(state_dict_path, artifact_path="models")
 
                 mlflow.set_tag("best_epoch", epoch)
@@ -216,14 +216,14 @@ class ThorTrainer:
                     "composite_score": result.get("composite_score", 0)
                 })
 
-                save_name = self.save_name.format(epoch)
-                if not os.path.exists(self.config.target_dir):
-                    os.makedirs(self.config.target_dir)
-                torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
-                           save_name)
+                #save_name = self.save_name.format(epoch)
+                #if not os.path.exists(self.config.target_dir):
+                #    os.makedirs(self.config.target_dir)
+                #torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                #           save_name)
 
-                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                message = f'MODEL SAVED at {current_time}: {save_name}'
+                #current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                #message = f'MODEL SAVED at {current_time}: {save_name}'
                 print(message, flush=True)
                 self.logger.info(message)
                 self.model.to(self.config.device)
