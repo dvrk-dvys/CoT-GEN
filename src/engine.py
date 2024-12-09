@@ -424,6 +424,11 @@ class ThorTrainer:
         res = {k: v.to(self.config.device) for k, v in res.items()}
         return res
 
+    def optimizer_to(self, optimizer, device):
+        for param_group in optimizer.param_groups:
+            for param in param_group['params']:
+                if param.grad is not None:
+                    param.grad = param.grad.to(device)
 
     def train_step(self):
         self.model.train()
@@ -499,6 +504,8 @@ class ThorTrainer:
                     print("Out of memory error caught. Switching to CPU.")
                     self.config.device = torch.device("cpu")
                     self.model.to(self.config.device)
+                    self.optimizer_to(self.config.optimizer, self.config.device)
+                    data = {k: v.to(self.config.device) if isinstance(v, torch.Tensor) else v for k, v in data.items()}
                     for data_key in data.keys():
                         if isinstance(data[data_key], torch.Tensor):
                             data[data_key] = data[data_key].to(self.config.device)
