@@ -423,11 +423,6 @@ class ThorTrainer:
         res = {k: v.to(self.config.device) for k, v in res.items()}
         return res
 
-    def optimizer_to(self, optimizer, device):
-        for param_group in optimizer.param_groups:
-            for param in param_group['params']:
-                if param.grad is not None:
-                    param.grad = param.grad.to(device)
 
     def train_step(self):
         self.model.train()
@@ -509,8 +504,6 @@ class ThorTrainer:
                 else:
                     raise e
 
-        self.model.to(self.config.device)
-        self.optimizer_to(self.config.optimizer, self.config.device)
         if len(train_data) % self.config.gradient_accumulation_steps != 0:
             nn.utils.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
             self.config.optimizer.step()
