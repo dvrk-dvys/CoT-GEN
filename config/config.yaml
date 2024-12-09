@@ -5,23 +5,22 @@ preprocessed_dir_colab: '/content/drive/MyDrive/preprocess'
 target_dir_colab: '/content/drive/MyDrive/models'
 model_path: 'google/flan-t5-base'
 model_size: 'base'
-label_list:  ['positive', 'negative', 'neutral'] #class weights for weighted loss?
+label_list:  ['positive', 'negative', 'neutral']
 emb_dim: 300
 output_channels: 100
 speaker_emb_dims: 300
 project_dims: 300
 max_length: 300
-pin_memory: False #True  need to optimize code to handle cuda multiprocessing
-num_workers: 0 #4 need to optimize code to handle cuda multiprocessing
-batch_size: 8 #64
+#batch_size: 64
+batch_size: 8
 epoch_size: 20
 train_mode: random
 filters: [3,4,5]
-dropout: 0.3 #0.5
+dropout: 0.5
 shuffle: True
-learning_rate: 1e-5 #1e-4
-bert_lr: 2e-5 #2e-4
-patience: 3 #100
+learning_rate: 1e-4
+bert_lr: 2e-4
+patience: 100
 max_grad_norm: 1.0
 warmup_proportion: 0.1
 gradient_accumulation_steps: 4

@@ -76,8 +76,8 @@ class MyDataLoader:
         })
 
         load_data = lambda dataset: DataLoader(MyDataset(dataset),
-                                               num_workers=self.config.num_workers,
-                                               pin_memory=self.config.pin_memory,
+                                               num_workers=0,
+                                               pin_memory=False,
                                                worker_init_fn=self.worker_init,
                                                shuffle=self.config.shuffle,
                                                batch_size=self.config.batch_size,
