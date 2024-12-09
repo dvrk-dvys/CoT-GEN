@@ -431,6 +431,9 @@ class ThorTrainer:
 
         for i, data in enumerate(train_data):
             try:
+                for key in data.keys():
+                    if isinstance(data[key], torch.Tensor):
+                        data[key] = data[key].to(self.config.device)
                 #****--------
                 target_label_data, approx_embeddings, target_embeddings, implicitness_label_data = self.prepare_step_zero(**data)
                 #****--------
