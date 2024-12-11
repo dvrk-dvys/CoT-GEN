@@ -153,7 +153,7 @@ class ThorTrainer:
         self.model = model
         self.config = config
         self.train_loader, self.valid_loader, self.test_loader = train_loader, valid_loader, test_loader
-        self.save_name = os.path.join(config.target_dir, config.save_name)
+        self.save_name = os.path.join(config.target_dir, config.data_name, config.save_name)
         self.save_name_colab = os.path.join(config.target_dir_colab, config.save_name)
         self.final_score = 0
         self.final_res = ''
@@ -164,22 +164,6 @@ class ThorTrainer:
         self.re_init()
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger()
-
-    def get_latest_checkpoint(self, target_dir, base_name):
-        pattern = os.path.join(target_dir, f"{base_name}_*.pth.tar")
-        files = glob.glob(pattern)
-        latest_epoch = -1
-        latest_file = None
-        for file in files:
-            try:
-                filename = os.path.basename(file)
-                epoch = int(file.split('_')[-1].split('.')[0])
-                if epoch > latest_epoch:
-                    latest_epoch = epoch
-                    latest_file = file
-            except ValueError:
-                continue
-        return latest_file, latest_epoch
 
     def train(self):
         best_score, best_iter = 0, -1
@@ -238,16 +222,19 @@ class ThorTrainer:
                 })
 
                 save_name = self.save_name.format(epoch)
-                if not os.path.exists(self.config.target_dir):
-                    os.makedirs(self.config.target_dir)
-
-                latest_file, latest_epoch = self.get_latest_checkpoint(self.config.target_dir, self.config.data_name)
-                if latest_file and latest_epoch < epoch:
-                    os.remove(latest_file)
-                    print(f"Removed older checkpoint: {latest_file}")
-
-                torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                ckpt_folder = os.path.join(self.config.target_dir, self.config.data_name)
+                if not os.path.exists(ckpt_folder):
+                    os.makedirs(ckpt_folder)
+                elif os.listdir(ckpt_folder) == []:
+                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
                            save_name)
+                else: #delete the previous model ckpt
+                    filelist = glob.glob(ckpt_folder)
+                    for f in filelist:
+                        os.remove(f)
+                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                           save_name)
+
 
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 message = f'MODEL SAVED at {current_time}: {save_name}'
