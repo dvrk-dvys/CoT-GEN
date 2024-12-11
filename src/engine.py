@@ -9,8 +9,7 @@ import socket
 import mlflow
 from mlflow.models import infer_signature
 
-#from tqdm import tqdm
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 from datetime import datetime
 from sklearn.metrics import accuracy_score, f1_score
 from collections import defaultdict
@@ -173,6 +172,7 @@ class ThorTrainer:
         latest_file = None
         for file in files:
             try:
+                filename = os.path.basename(file)
                 epoch = int(file.split('_')[-1].split('.')[0])
                 if epoch > latest_epoch:
                     latest_epoch = epoch
