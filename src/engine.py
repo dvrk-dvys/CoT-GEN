@@ -9,7 +9,8 @@ import socket
 import mlflow
 from mlflow.models import infer_signature
 
-from tqdm import tqdm
+#from tqdm import tqdm
+from tqdm.notebook import tqdm
 from datetime import datetime
 from sklearn.metrics import accuracy_score, f1_score
 from collections import defaultdict
@@ -185,7 +186,11 @@ class ThorTrainer:
         # Log Hyperparams
         mlflow.log_params(self.config.__dict__)
 
-        for epoch in tqdm(range(self.start_epoch, self.config.epochs)):
+        for epoch in tqdm(range(self.start_epoch, self.config.epochs),
+                            desc="Training Progress",
+                            leave=True,
+                            dynamic_ncols=True
+        ):
             self.model.global_epoch = epoch
             self.global_epoch = epoch
             self.train_step()
@@ -260,7 +265,6 @@ class ThorTrainer:
                 #    print('MODEL SAVED to Drive:', save_name_colab, flush=True)
                 #    self.model.to(self.config.device)
                 #--------- Save to Drive
-
 
             elif epoch - best_iter > self.config.patience:
                 message = f"Not upgrade for {self.config.patience} steps, early stopping..."
