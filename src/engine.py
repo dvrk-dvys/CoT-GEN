@@ -1,3 +1,4 @@
+import glob
 import os
 import sys
 import torch
@@ -38,7 +39,7 @@ class PromptTrainer:
 
     def train(self):
         best_score, best_iter = 0, -1
-        for epoch in tqdm(range(self.start_epoch, self.config.epoch_size)):
+        for epoch in tqdm(range(self.start_epoch, self.config.epochs)):
             self.model.global_epoch = epoch
             self.global_epoch = epoch
             self.train_step()
@@ -164,13 +165,27 @@ class ThorTrainer:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger()
 
+    def get_latest_checkpoint(self, target_dir, base_name):
+        pattern = os.path.join(target_dir, f"{base_name}_*.pth.tar")
+        files = glob.glob(pattern)
+        latest_epoch = -1
+        latest_file = None
+        for file in files:
+            try:
+                epoch = int(file.split('_')[-1].split('.')[0])
+                if epoch > latest_epoch:
+                    latest_epoch = epoch
+                    latest_file = file
+            except ValueError:
+                continue
+        return latest_file, latest_epoch
 
     def train(self):
         best_score, best_iter = 0, -1
         # Log Hyperparams
         mlflow.log_params(self.config.__dict__)
 
-        for epoch in tqdm(range(self.start_epoch, self.config.epoch_size)):
+        for epoch in tqdm(range(self.start_epoch, self.config.epochs)):
             self.model.global_epoch = epoch
             self.global_epoch = epoch
             self.train_step()
@@ -195,10 +210,11 @@ class ThorTrainer:
             if score > best_score:
                 best_score, best_iter = score, epoch
 
-                if "DATABRICKS_RUNTIME_VERSION" in os.environ:  # Running in Databricks
+                if "DATABRICKS_RUNTIME_VERSION" in os.environ:
                     state_dict_path = "/tmp/best_model_state.pth"
-                else:  # Running locally
+                else:
                     state_dict_path = "mlruns/models/best_model_state.pth"
+                    #state_dict_path = state_dict_path.format(epoch)
                     os.makedirs(os.path.dirname(state_dict_path), exist_ok=True)
 
                 model_to_log = self.model.module if isinstance(self.model, torch.nn.DataParallel) else self.model
@@ -216,32 +232,37 @@ class ThorTrainer:
                     "composite_score": result.get("composite_score", 0)
                 })
 
-                #save_name = self.save_name.format(epoch)
-                #if not os.path.exists(self.config.target_dir):
-                #    os.makedirs(self.config.target_dir)
-                #torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
-                #           save_name)
+                save_name = self.save_name.format(epoch)
+                if not os.path.exists(self.config.target_dir):
+                    os.makedirs(self.config.target_dir)
 
-                #current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                #message = f'MODEL SAVED at {current_time}: {save_name}'
+                latest_file, latest_epoch = self.get_latest_checkpoint(self.config.target_dir, self.config.data_name)
+                if latest_file and latest_epoch < epoch:
+                    os.remove(latest_file)
+                    print(f"Removed older checkpoint: {latest_file}")
+
+                torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                           save_name)
+
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                message = f'MODEL SAVED at {current_time}: {save_name}'
                 print(message, flush=True)
                 self.logger.info(message)
                 self.model.to(self.config.device)
                 #--------- Save to Drive
-                if in_colab:
-                    save_name_colab = self.save_name_colab.format(epoch)
-                    if not os.path.exists(self.config.target_dir_colab):
-                        os.makedirs(self.config.target_dir_colab)
-                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
-                               save_name_colab)
-
-                    print('MODEL SAVED to Drive:', save_name_colab, flush=True)
-                    self.model.to(self.config.device)
+                #if in_colab:
+                #    save_name_colab = self.save_name_colab.format(epoch)
+                #    if not os.path.exists(self.config.target_dir_colab):
+                #        os.makedirs(self.config.target_dir_colab)
+                #    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                #               save_name_colab)
+                #
+                #    print('MODEL SAVED to Drive:', save_name_colab, flush=True)
+                #    self.model.to(self.config.device)
                 #--------- Save to Drive
 
 
             elif epoch - best_iter > self.config.patience:
-                # print("Not upgrade for {} steps, early stopping...".format(self.config.patience), flush=True)
                 message = f"Not upgrade for {self.config.patience} steps, early stopping..."
                 print(message, flush=True)
                 self.logger.info(message)
@@ -560,14 +581,14 @@ class ThorTrainer:
         res = self.evaluate_step(self.test_loader, mode='test')
         self.add_instance(res)
 
-        # Log the final model
+        registered_model = "thor_model_final_{}_{}".format(epoch, self.config.data_name)
+
         mlflow.pytorch.log_model(
             self.model,
             artifact_path="models/final",
-            registered_model_name="thor_model_final"
+            registered_model_name=registered_model
         )
 
-        # Log final evaluation metrics
         mlflow.log_metrics({
             "Final_Acc_SA": res.get("Acc_SA", 0),
             "Final_F1_SA": res.get("F1_SA", 0),
@@ -576,7 +597,6 @@ class ThorTrainer:
             "Final_Avg_Cosine_Similarity": res.get("Avg_Cosine_Similarity", 0),
             "Final_Composite_Score": res.get("composite_score", 0)
         })
-
 
         return res
 

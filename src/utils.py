@@ -142,7 +142,7 @@ def load_params_LLM(config, model, fold_data):
 
     optimizer = AdamW(optimizer_grouped_parameters, eps=float(config.adam_epsilon))
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=config.warmup_steps,
-                                                num_training_steps=config.epoch_size * fold_data.__len__())
+                                                num_training_steps=config.epochs * fold_data.__len__())
     config.score_manager = ScoreManager()
     config.optimizer = optimizer
     config.scheduler = scheduler

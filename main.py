@@ -137,7 +137,7 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--config', default='./config/config.yaml', help='config file')
     parser.add_argument('-ckpt', '--checkpoint_path', default='', help='path to model checkpoint')
     parser.add_argument('-db_mlflow', '--databricks_mlflow', default=True)
-    parser.add_argument('-db_path', '--databricks_path', default='https://adb-958040179716700.0.azuredatabricks.net', help='databricks url')
+    parser.add_argument('-db_path', '--databricks_path', default='https://adb-1427985157421097.17.azuredatabricks.net/', help='databricks url')
     parser.add_argument('-db_token', '--databricks_token', default='', help='databricks path')
     parser.add_argument('-db_experiment', '--databricks_experiment', default="/CoT-GEN_Experiment", help='databricks experiment path') #"/data/models/experiments/CoT-GEN_Experiment"
     parser.add_argument('-db_experiment_id', '--databricks_experiment_id', help='databricks experiment id') #"/data/models/experiments/CoT-GEN_Experiment"
