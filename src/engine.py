@@ -59,7 +59,6 @@ class PromptTrainer:
                     os.makedirs(self.config.target_dir)
                 torch.save({'epoch': epoch, 'model': self.model.engine.cpu().state_dict(), 'best_score': best_score},
                            save_name)
-                print(save_name)
                 self.model.to(self.config.device)
             elif epoch - best_iter > self.config.patience:
                 print("Not upgrade for {} steps, early stopping...".format(self.config.patience))
@@ -199,6 +198,23 @@ class ThorTrainer:
             if score > best_score:
                 best_score, best_iter = score, epoch
 
+                save_name = self.save_name.format(epoch)
+                ckpt_folder = os.path.join(self.config.target_dir, self.config.data_name)
+                print(ckpt_folder)
+                if not os.path.exists(ckpt_folder):
+                    os.makedirs(ckpt_folder)
+                print('folder created', ckpt_folder)
+
+                if os.listdir(ckpt_folder) == []:
+                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                           save_name)
+                else: #delete the previous model ckpt
+                    filelist = glob.glob(ckpt_folder + '/*')
+                    for f in filelist:
+                        os.remove(f)
+                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
+                           save_name)
+
                 if "DATABRICKS_RUNTIME_VERSION" in os.environ:
                     state_dict_path = "/tmp/best_model_state.pth"
                 else:
@@ -220,23 +236,6 @@ class ThorTrainer:
                     "Avg_Cosine_Similarity": result.get("Avg_Cosine_Similarity", 0),
                     "composite_score": result.get("composite_score", 0)
                 })
-
-                save_name = self.save_name.format(epoch)
-                ckpt_folder = os.path.join(self.config.target_dir, self.config.data_name)
-                print(ckpt_folder)
-                if not os.path.exists(ckpt_folder):
-                    os.makedirs(ckpt_folder)
-                print('folder created', ckpt_folder)
-
-                if os.listdir(ckpt_folder) == []:
-                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
-                           save_name)
-                else: #delete the previous model ckpt
-                    filelist = glob.glob(ckpt_folder + '/*')
-                    for f in filelist:
-                        os.remove(f)
-                    torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
-                           save_name)
 
 
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
