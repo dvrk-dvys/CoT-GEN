@@ -229,7 +229,7 @@ class ThorTrainer:
                     torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
                            save_name)
                 else: #delete the previous model ckpt
-                    filelist = glob.glob(ckpt_folder)
+                    filelist = glob.glob(ckpt_folder + '/*')
                     for f in filelist:
                         os.remove(f)
                     torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
