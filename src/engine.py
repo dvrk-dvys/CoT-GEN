@@ -223,9 +223,12 @@ class ThorTrainer:
 
                 save_name = self.save_name.format(epoch)
                 ckpt_folder = os.path.join(self.config.target_dir, self.config.data_name)
+                print(ckpt_folder)
                 if not os.path.exists(ckpt_folder):
                     os.makedirs(ckpt_folder)
-                elif os.listdir(ckpt_folder) == []:
+                print('folder created', ckpt_folder)
+
+                if os.listdir(ckpt_folder) == []:
                     torch.save({'epoch': epoch, 'model': self.model.cpu().state_dict(), 'best_score': best_score},
                            save_name)
                 else: #delete the previous model ckpt
