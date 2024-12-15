@@ -180,7 +180,7 @@ def load_checkpoint_or_weights(model, checkpoint_path, device='cpu'):
         print("Loading model weights only...")
 
     # Remove any unnecessary prefixes (e.g., 'engine.') from keys
-    state_dict = {key.replace('engine.', ''): value for key, value in state_dict.items()}
+    #state_dict = {key.replace('engine.', ''): value for key, value in state_dict.items()}
 
     # Load the state dictionary into the model
     model.load_state_dict(state_dict)
