@@ -148,6 +148,47 @@ def load_params_LLM(config, model, fold_data):
     config.scheduler = scheduler
     return config
 
+def load_checkpoint_or_weights(model, checkpoint_path, device='cpu'):
+    """
+    Loads either a full checkpoint with metadata or just model weights into the given model.
+
+    Parameters:
+        model (torch.nn.Module): The model to load the checkpoint or weights into.
+        checkpoint_path (str): Path to the checkpoint or weights file.
+        device (str): The device to map the loaded model and checkpoint (default is 'cpu').
+
+    Returns:
+        tuple: (start_epoch, best_score) extracted from the checkpoint (if available).
+    """
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint file not found at {checkpoint_path}")
+
+    # Load the checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+
+    if 'model' in checkpoint:
+        # Full checkpoint with metadata
+        state_dict = checkpoint['model']
+        start_epoch = checkpoint.get('epoch', 0) + 1
+        best_score = checkpoint.get('best_score', 0)
+        print(f"Loading full checkpoint with metadata: epoch={start_epoch}, best_score={best_score}")
+    else:
+        # Just model weights
+        state_dict = checkpoint
+        start_epoch = 0
+        best_score = 0
+        print("Loading model weights only...")
+
+    # Remove any unnecessary prefixes (e.g., 'engine.') from keys
+    state_dict = {key.replace('engine.', ''): value for key, value in state_dict.items()}
+
+    # Load the state dictionary into the model
+    model.load_state_dict(state_dict)
+    model.to(device)
+
+    print(f"Checkpoint successfully loaded from {checkpoint_path}")
+    return start_epoch, best_score
+
 
 class ScoreManager:
     def __init__(self) -> None:

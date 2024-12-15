@@ -8,7 +8,7 @@ from addict import Dict
 import mlflow
 import pandas as pd
 
-from src.utils import set_seed, load_params_LLM
+from src.utils import set_seed, load_params_LLM, load_checkpoint_or_weights
 from src.loader import MyDataLoader
 from src.model import LLMBackbone
 from src.engine import PromptTrainer, ThorTrainer
@@ -89,7 +89,13 @@ class Template:
         self.config = load_params_LLM(self.config, self.model, self.trainLoader)
 
         if self.config.checkpoint_path:
-            self.load_checkpoint(self.config.checkpoint_path)
+            #self.load_checkpoint(self.config.checkpoint_path)
+            self.start_epoch, self.best_score = load_checkpoint_or_weights(
+                self.model,
+                self.config.checkpoint_path,
+                device=self.config.device
+            )
+
 
         print(f"Running on the {self.config.data_name} data.")
         if self.config.reasoning == 'prompt':
@@ -115,14 +121,6 @@ class Template:
 
         df = pd.DataFrame(lines)
         print(df.to_string())
-
-    def load_checkpoint(self, checkpoint_path):
-        checkpoint = torch.load(checkpoint_path, map_location=self.config.device)
-        model_state_dict = checkpoint['model']
-        self.model.load_state_dict(model_state_dict)
-        self.start_epoch = checkpoint['epoch'] + 1
-        self.best_score = checkpoint['best_score']
-        print(f"Loaded checkpoint from {checkpoint_path}")
 
 
 if __name__ == '__main__':
