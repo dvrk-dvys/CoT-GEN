@@ -10,7 +10,8 @@ import yaml
 import numpy as np
 import pandas as pd
 from collections import Counter, defaultdict
-from attrdict import AttrDict
+from addict import Dict
+
 import json
 import unicodedata
 
@@ -22,7 +23,7 @@ from transformers import TFRobertaModel, AutoTokenizer
 
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import Row
-from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank, desc, asc, length, arrays_zip
+from pyspark.sql.functions import explode, col, expr, array_join, upper, rank, desc, asc, length, arrays_zip #left
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id, pandas_udf, PandasUDFType
 from pyspark.sql.functions import unix_timestamp, from_unixtime
 from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, \
@@ -226,7 +227,8 @@ class genDataset:
         #self.pre_nlp = pre_nlp.sort_values(by=['comments'], ascending=True)
         self.pre_nlp = pre_nlp
 
-        config = AttrDict(yaml.load(open(args.config, 'r', encoding='utf-8'), Loader=yaml.FullLoader))
+        config = Dict(yaml.load(open(args.config, 'r', encoding='utf-8'), Loader=yaml.FullLoader))
+
         for k, v in vars(args).items():
             setattr(config, k, v)
         self.config = config
