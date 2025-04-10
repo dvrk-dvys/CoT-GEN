@@ -22,7 +22,7 @@ from transformers import TFRobertaModel, AutoTokenizer
 
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import Row
-from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank, desc, asc, length, arrays_zip
+from pyspark.sql.functions import explode, col, expr, array_join, upper, rank, desc, asc, length, arrays_zip #left
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id, pandas_udf, PandasUDFType
 from pyspark.sql.functions import unix_timestamp, from_unixtime
 from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, \
