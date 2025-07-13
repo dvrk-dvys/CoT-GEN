@@ -14,7 +14,6 @@ import torch
 #RAG systems
 
 
-token = ''
 model_id = "mistralai/Mistral-7B-Instruct-v0.2"
 cache_dir = "/Users/jordanharris/.cache/huggingface/hub"
 local_model_path = "/Users/jordanharris/.cache/huggingface/hub/models--mistralai--Mistral-7B-Instruct-v0.2/snapshots/3ad372fc79158a2148299e3318516c786aeded6c"
