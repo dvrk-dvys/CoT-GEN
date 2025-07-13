@@ -276,12 +276,12 @@ class genDataset:
         self.model = self.config['chat_gpt_model_path']
         #################################################################################
         self.local_tokenizer = AutoTokenizer.from_pretrained("TheBloke/Mistral-7B-Instruct-v0.1-GPTQ")
-        self.local_llm_model = AutoModelForCausalLM.from_pretrained(
-            "TheBloke/Mistral-7B-Instruct-v0.1-GPTQ",
-            device_map="auto",  # Will use GPU if available
-            torch_dtype=torch.float16,
-            trust_remote_code=True
-        )
+        #self.local_llm_model = AutoModelForCausalLM.from_pretrained(
+        #    "TheBloke/Mistral-7B-Instruct-v0.1-GPTQ",
+        #    device_map="auto",  # Will use GPU if available
+        #    torch_dtype=torch.float16,
+        #    trust_remote_code=True
+        #)
 
 
         self.spark_session = (SparkSession.builder
@@ -859,36 +859,36 @@ class genDataset:
         assert flat_df.count() == len(flat_list)
         return flat_list, flat_df
 
-    @json_error_handler(max_retries=3, delay_seconds=2, spec='Base GPT Prompt')
-    @rest_after_run(sleep_seconds=2)
-    def prompt_local_llm(self, role, prompt, max_tokens):
+   # @json_error_handler(max_retries=3, delay_seconds=2, spec='Base GPT Prompt')
+   # @rest_after_run(sleep_seconds=2)
+    #def prompt_local_llm(self, role, prompt, max_tokens):
+#
+ #       try:
+  #          input_ids = self.local_tokenizer(prompt, return_tensors="pt").to(self.local_llm_model.device)
+   #         output = self.local_llm_model.generate(**input_ids, max_new_tokens=max_tokens, do_sample=True)
+    #        decoded = self.local_tokenizer.decode(output[0], skip_special_tokens=True)
+     #       # return decoded
 
-        try:
-            input_ids = self.local_tokenizer(prompt, return_tensors="pt").to(self.local_llm_model.device)
-            output = self.local_llm_model.generate(**input_ids, max_new_tokens=max_tokens, do_sample=True)
-            decoded = self.local_tokenizer.decode(output[0], skip_special_tokens=True)
-            # return decoded
-
-            if decoded == None:
-                print()
-            cleaned_response = re.search(r"\[.*\]$", decoded, re.DOTALL)
-            if cleaned_response is None:
-                raise ValueError("Could not extract JSON array from the response. Response: " + decoded)
-            cleaned_response = re.sub(r"(?<!\\)'", '"', cleaned_response.string)
-            response = json.loads(cleaned_response)
-            if response == None:
-                print()
-        except (json.JSONDecodeError, AssertionError) as e:
-            print("Error parsing JSON:", str(e))
-            print("Cleaned Response:", cleaned_response)
-            if response == None:
-                print()
-
-        print(response)
-        assert isinstance(response, list), f"{self.local_llm_model} output is read to list"
-        assert isinstance(response[0], dict), f"{self.local_llm_model} output is read to list"
-
-        return response
+      #      if decoded == None:
+       #         print()
+        #    cleaned_response = re.search(r"\[.*\]$", decoded, re.DOTALL)
+         #   if cleaned_response is None:
+         #       raise ValueError("Could not extract JSON array from the response. Response: " + decoded)
+         #   cleaned_response = re.sub(r"(?<!\\)'", '"', cleaned_response.string)
+         #   response = json.loads(cleaned_response)
+         #   if response == None:
+         #       print()
+        #except (json.JSONDecodeError, AssertionError) as e:
+        #    print("Error parsing JSON:", str(e))
+        #    print("Cleaned Response:", cleaned_response)
+        #    if response == None:
+        #        print()
+#
+#        print(response)
+#        assert isinstance(response, list), f"{self.local_llm_model} output is read to list"
+#        assert isinstance(response[0], dict), f"{self.local_llm_model} output is read to list"
+#
+#        return response
 
 
 
@@ -1024,7 +1024,7 @@ class genDataset:
 
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Aspects')
     @rest_after_run(sleep_seconds=4)
-    def batch_extract__aspects(self, nlp_batch, feature_set, max_aspects, batch_input):
+    def batch_extract_aspects(self, nlp_batch, feature_set, max_aspects, batch_input):
         new_context = f'Given these sentences and NLP features "{nlp_batch}", '
         prompt = new_context + f'which words or phrases are the aspect terms?'
         role = (
@@ -1419,7 +1419,9 @@ if __name__ == '__main__':
 
     raw_file_path = './data/raw/TTCommentExporter-7226101187500723498-201-comments.csv'
     #stanza_path = "./data/gen/stanza-7226101187500723498-201.parquet"
-    out_parquet_path = "data/gen/train_dataframe.parquet"
+    debug_out_parquet_path = "./data/gen/debug_train_dataframe.parquet"
+
+    #out_parquet_path = "data/gen/train_dataframe.parquet"
     out_pkl_path = './data/gen/Tiktok_Train_Implicit_Labeled_preprocess_finetune.pkl'
 
     pre_args = parse_arguments(stanza=False, nltk=True, spacy=True)
@@ -1434,7 +1436,7 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--stanza_file_path', default='')  #stanza_path)
 
     parser.add_argument('-r_col', '--raw_text_col', default='Comment')
-    parser.add_argument('-o', '--out_file_path', default=out_parquet_path)
+    parser.add_argument('-o', '--out_file_path', default=debug_out_parquet_path)
     parser.add_argument('-o_col', '--out_text_col', default='raw_text')
 
     parser.add_argument('-of', '--output_format', default='pkl', choices=['xml', 'json', 'pkl'])
