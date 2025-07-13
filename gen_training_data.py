@@ -10,16 +10,21 @@ import yaml
 import numpy as np
 import pandas as pd
 from collections import Counter, defaultdict
-from attrdict import AttrDict
+from addict import Dict
+
 import json
 import unicodedata
 
+from pydantic import BaseModel, RootModel, field_serializer
+from enum import IntEnum
+from typing import List, Union
 
-from transformers import TFRobertaModel, AutoTokenizer
+from transformers import TFRobertaModel, AutoTokenizer, AutoModelForCausalLM
+import torch
 
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import Row
-from pyspark.sql.functions import explode, col, expr, array_join, upper, left, rank, desc, asc, length
+from pyspark.sql.functions import explode, col, expr, array_join, upper, rank, desc, asc, length, arrays_zip #left
 from pyspark.sql.functions import lit, udf, monotonically_increasing_id, pandas_udf, PandasUDFType
 from pyspark.sql.functions import unix_timestamp, from_unixtime
 from pyspark.sql.types import StructType, StructField, StringType, ArrayType, IntegerType, BinaryType, BooleanType, \
@@ -28,6 +33,35 @@ from openai import OpenAI
 from distutils.util import strtobool
 from src.utils import prompt_direct_inferring, prompt_direct_inferring_masked, prompt_for_aspect_inferring
 from src.preprocess_utils import NLPTextAnalyzer, parse_arguments
+
+'''
+todo:
+    - transfer off chat gpt
+        -❯ ~/.cache/huggingface/hub
+            models--TheBloke--Mistral-7B-Instruct-v0.1-GPTQ
+            models--bert-base-uncased
+            models--mistralai--Mistral-7B-Instruct-v0.2
+            models--mistralai--Mistral-7B-v0.1
+            models--mlx-community--Llama-3.2-3B-Instruct-4bit
+            models--mlx-community--Meta-Llama-3-8B-Instruct-4bit
+            models--mlx-community--quantized-gemma-7b
+            version.txt
+    - betweeness centrality
+    - degree centrality
+    - page rank
+    - Community detection and novelty bridging: Using the graph or even content similarity, you can detect communities or
+    clusters of comments within a discussion. For instance, in a long thread, there might be a cluster of comments all
+    talking about aspect A, and another cluster about aspect B. An insightful comment might be one that introduces a
+    new aspect (essentially starting a new cluster) or one that links two previously separate discussions. 
+    This is analogous to finding modules in gene networks and hub genes that connect modules. You can use algorithms
+    like Louvain or Girvan-Newman on the comment reply graph to find clusters of tightly inter-connected comments (sub-discussions). 
+    Then examine which comments are the entry points to those clusters – e.g., the top comment of a cluster, or a comment that has
+    links to multiple clusters. Those entry points often are questions or statements that broaden the discussion (valuable contributions).
+    Additionally, if a comment’s content has high similarity to comments in another thread or context, it might be bringing external 
+    insight (though that’s more cross-thread analysis). In essence, think of each distinct topic or aspect in the discussion as a community,
+    and the comment that either initiates that topic or synthesizes multiple topics is valuable. Graph analysis can algorithmically suggest those.
+'''
+
 
 
 #doc = nlp("Barack Obama was born in Hawaii.") # run annotation over a sentence
@@ -177,21 +211,79 @@ def json_error_handler(max_retries=3, delay_seconds=8, spec=''):
     return decorator
 
 
+
+class ReasoningStep(BaseModel):
+    explanation: str
+
+class AspectTerm(BaseModel):
+    aspectTerm: Union[str, List[str]]  # Allow for a single term or a list of terms
+    reasoning_steps: List[ReasoningStep]
+
+class AspectResponse(BaseModel):
+    aspects: List[AspectTerm]
+
+class Implicitness(BaseModel):
+    implicitness: bool
+    reasoning_steps: List[ReasoningStep]
+
+class PolarityLabel(IntEnum):
+    positive = 0
+    negative = 1
+    neutral = 2
+
+class Polarity(BaseModel):
+    polarity: PolarityLabel
+    reasoning_steps: List[ReasoningStep]
+    class Config:
+        use_enum_values = True  # Serialize Enums to their names
+
+    #@field_serializer('polarity')
+    #def serialize_polarity(self, value: PolarityLabel, info):
+    #    return value.name  # Serialize to the Enum's name
+
+    def dict(self, *args, **kwargs):
+        result = super().dict(*args, **kwargs)
+        if not result.get('reasoning_steps'):
+            result['reasoning_steps'] = ''  # Convert empty list to empty string
+        return result
+
+class ImplicitnessPolarityResponse(BaseModel):
+    implicitness: List[Implicitness]
+    polarity: List[Polarity]
+
 class genDataset:
     def __init__(self, args, pre_nlp):
         # cwd = os.getcwd()
         #self.pre_nlp = pre_nlp.sort_values(by=['comments'], ascending=True)
-        #print(self.pre_nlp.comments)
         self.pre_nlp = pre_nlp
 
+        config = Dict(yaml.load(open(args.config, 'r', encoding='utf-8'), Loader=yaml.FullLoader))
 
-        config = AttrDict(yaml.load(open(args.config, 'r', encoding='utf-8'), Loader=yaml.FullLoader))
         for k, v in vars(args).items():
             setattr(config, k, v)
         self.config = config
         self.config['openai_token'] = os.getenv("OPENAI_API_KEY")
+        self.input_file_path = args.raw_file_path
+        self.stanza_file_path = args.stanza_file_path
+        self.output_file_path = args.out_file_path
+        self.raw_text_col = args.raw_text_col
+        self.out_text_col = args.out_text_col
+        self.batch_size = self.config['gen_batch_size']
+        self.output_pkl_path = args.output_pkl_path
+
 
         self.tokenizer = AutoTokenizer.from_pretrained(config.bert_model_path)
+        self.model = self.config['chat_gpt_model_path']
+        #################################################################################
+        self.local_tokenizer = AutoTokenizer.from_pretrained("TheBloke/Mistral-7B-Instruct-v0.1-GPTQ")
+        self.local_llm_model = AutoModelForCausalLM.from_pretrained(
+            "TheBloke/Mistral-7B-Instruct-v0.1-GPTQ",
+            device_map="auto",  # Will use GPU if available
+            torch_dtype=torch.float16,
+            trust_remote_code=True
+        )
+
+
         self.spark_session = (SparkSession.builder
                               .master("local[*]")
                               .appName("TiktokComments")
@@ -234,47 +326,75 @@ class genDataset:
             StructField('sentences', ArrayType(StringType()), nullable=True)
         ])
 
+        self.explode_schema = StructType([
+            StructField('input_ids', ArrayType(IntegerType()), nullable=False),
+            StructField('token_type_ids', ArrayType(IntegerType()), nullable=False),
+            StructField('attention_mask', ArrayType(IntegerType()), nullable=False),
+            StructField('spaCy_tokens', ArrayType(StringType()), nullable=False),
+            StructField('POS', ArrayType(StringType()), nullable=False),
+            StructField('POS_tags', ArrayType(StringType()), nullable=False),
+            StructField('entities', ArrayType(StringType()), nullable=True),
+            StructField('heads', ArrayType(StringType()), nullable=False),
+            StructField('labels', ArrayType(StringType()), nullable=True),
+            StructField('dependencies', ArrayType(StringType()), nullable=False),
+            StructField('negations', ArrayType(StringType()), nullable=True),
+            StructField('LDA_aspect_prob', StringType(), nullable=False),
+            StructField(self.raw_text_col, StringType(), nullable=True),
+        ])
+
         self.isa_schema = StructType([
-            StructField("aspect", StringType(), True),
+            StructField("aspectTerm", StringType(), True),
             StructField("aspect_mask", ArrayType(IntegerType(), True), True),
             StructField("token_ids", ArrayType(IntegerType(), True), True),
             StructField("token_type_ids", ArrayType(IntegerType(), True), True),
             StructField("attention_mask", ArrayType(IntegerType(), True), True),
             StructField("implicitness", BooleanType(), True),
             StructField("polarity", IntegerType(), True),
-            StructField("raw_text", StringType(), True)
+            StructField("raw_text", StringType(), True),
+            StructField("index", LongType(), True)
         ])
 
         self.final_schema = StructType([
+            StructField("Comment", StringType(), True),
             StructField("Comment ID", StringType(), True),
             StructField("Reply to Which Comment", StringType(), True),
             StructField("User ID", StringType(), True),
             StructField("Username", StringType(), True),
             StructField("Nick Name", StringType(), True),
-            StructField("Comment", StringType(), True),
             StructField("Comment Time", StringType(), True),
             StructField("Digg Count", IntegerType(), True),
             StructField("Author Digged", StringType(), True),
             StructField("Reply Count", IntegerType(), True),
             StructField("Pinned to Top", StringType(), True),
             StructField("User Homepage", StringType(), True),
-            StructField("aspect", StringType(), True),
-            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
-            StructField("token_ids", ArrayType(IntegerType(), True), True),
+            StructField("shannon_entropy", DoubleType(), True),
+            StructField("index", LongType(), True),
+            StructField("mutual_information_score", DoubleType(), True),
+            StructField("surprisal", DoubleType(), True),
+            StructField("perplexity", DoubleType(), True),
+            StructField("contextual_mutual_information_score", DoubleType(), True),
+            StructField("contextual_surprisal", DoubleType(), True),
+            StructField("contextual_perplexity", DoubleType(), True),
+            StructField("input_ids", ArrayType(IntegerType(), True), True),
             StructField("token_type_ids", ArrayType(IntegerType(), True), True),
             StructField("attention_mask", ArrayType(IntegerType(), True), True),
-            StructField("implicitness", BooleanType(), True),  # based on previous error message
+            StructField("spaCy_tokens", ArrayType(StringType(), True), True),
+            StructField("POS", ArrayType(StringType(), True), True),
+            StructField("POS_tags", ArrayType(StringType(), True), True),
+            StructField("entities", ArrayType(StringType(), True), True),
+            StructField("heads", ArrayType(StringType(), True), True),
+            StructField("labels", ArrayType(StringType(), True), True),
+            StructField("dependencies", ArrayType(StringType(), True), True),
+            StructField("negations", ArrayType(StringType(), True), True),
+            StructField("LDA_aspect_prob", StringType(), True),  # Updated to StringType as per the observed schema
+            StructField("aspectTerm", StringType(), True),
+            StructField("aspect_mask", ArrayType(IntegerType(), True), True),
+            StructField("implicitness", BooleanType(), True),
             StructField("polarity", IntegerType(), True),
-            StructField("raw_text", StringType(), True)
+            StructField("token_ids", ArrayType(IntegerType(), True), True),
+            StructField("raw_text", StringType(), True),
+            StructField("reasoning", StringType(), True)
         ])
-
-        self.input_file_path = args.raw_file_path
-        self.stanza_file_path = args.stanza_file_path
-        self.output_file_path = args.out_file_path
-        self.raw_text_col = args.raw_text_col
-        self.out_text_col = args.out_text_col
-        self.batch_size = self.config['gen_batch_size']
-        self.output_pkl_path = args.output_pkl_path
 
         self.processed_ids = []
         self.remaining_df = None
@@ -282,7 +402,6 @@ class genDataset:
         self.trigram_probabilities = {}
 
         self.base_df, self.raw_input_array = self.initialize_df(self.raw_text_col, self.out_text_col)
-        self.model = "gpt-4o"
 
     @staticmethod
     @udf(returnType=DoubleType())
@@ -409,7 +528,7 @@ class genDataset:
 
         scores_df = self.spark_session.createDataFrame(scores, ["Comment ID", "contextual_mutual_information_score",
                                                                 "contextual_surprisal", "contextual_perplexity"])
-        df = df.join(scores_df, on="Comment ID", how="left")
+        df = df.join(scores_df, on="Comment ID", how="left").orderBy(col("index").desc())
         return df
 
     def initialize_df(self, raw_text_column, out_text_col):
@@ -418,20 +537,25 @@ class genDataset:
             .schema(self.csv_schema)
             .csv(f"{self.input_file_path}", header=True, inferSchema=True)
             .withColumn("shannon_entropy", self.calc_shannon_entropy(col(raw_text_column)))
-            #.withColumn("surprisal", self.calculate_surprisal(col(raw_text_column)))
-            .withColumn("index", monotonically_increasing_id())
             .withColumn("Comment Time", from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
-            .orderBy(col("Comment Time"))
+            #.orderBy(col("Comment Time"))
+            .orderBy([asc('Comment'), desc(length(col('Comment')))]) #asc(col("Comment Time")),
+            .withColumn("index", monotonically_increasing_id())
             #.limit(30)
         )
-        print('Initialize DF')
-        base_df.show()
-        #Stanza stuff        #####################
-        #stanza_df = self.spark_session.read.parquet(self.stanza_file_path)
-        #joined_df = base_df.join(stanza_df, base_df[raw_text_column] == stanza_df['sentence'], "left_outer")
-        #base_df = joined_df.drop(stanza_df['sentence'])
-        #base_df.show()
-        #Stanza stuff #####################
+        print('Initialize DF:')
+        base_df.show(self.batch_size)
+
+        self.pre_nlp_df = (
+            self.spark_session.createDataFrame(self.pre_nlp, self.pre_nlp_schema)
+            .orderBy([asc('comments'), desc(length(col('comments')))])
+            .withColumn("index", monotonically_increasing_id())  # Adding the 'index' column
+        ).orderBy(desc(col("index")))
+           # self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
+        #    self.remaining_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
+
+        #------------------------------------------------------------------
+        print('Calculating Scores...')
 
         corpus = base_df.selectExpr("collect_list(Comment) as Comment").collect()[0]["Comment"]
         self.comment_corpus = " ".join(corpus)
@@ -494,38 +618,71 @@ class genDataset:
         base_df = base_df.withColumn("perplexity", perplexity_udf(col("Comment")))
 
         base_df = self.construct_contextual_scores(base_df)
+        base_df = base_df.orderBy(desc(col("index")))
         # base_df = base_df.withColumn("Comment Time", col("Comment Time").cast("timestamp"))
-        base_df = base_df.withColumn("Comment Time",
-                                     from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
-        print('Calculate Scores')
+        #base_df = base_df.withColumn("Comment Time",
+        #                             from_unixtime(unix_timestamp(col("Comment Time"), "dd/MM/yyyy, HH:mm:ss")))
+        print('Information Scores:')
         base_df.show(self.batch_size)
+        #------------------------------------------------------------------
+
+        #if os.path.exists(self.output_file_path):
+        #    self.processed_df = self.spark_session.read.schema(self.final_schema).parquet(f"{self.output_file_path}")
+        #    print('The current parquet df length is: ', self.processed_df.count())
+        #    self.processed_df = self.processed_df.orderBy(desc(col("index")))
+        #    self.processed_df.show(self.batch_size)
+        #    self.processed_ids = self.processed_df.select(out_text_col).distinct().rdd.flatMap(lambda x: x).collect()
+        #else:
+        #    self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
+
+        #!!!!!
+
+        #test_base_df = base_df.filter(col("index") == 69)
+        #test_base_df.show(truncate=False)
+
+        print('Prenlp length: ',self.pre_nlp_df.count())
+
+        #print('Preprocessed NLP DF')
+        #self.pre_nlp_df.show(self.batch_size)
+        # !!!!!
+
+        #self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
+        #------------------------------------------------------------------
+        #self.remaining_df = self.remaining_df.orderBy(asc('comment'), length(col('Comment')).desc())
+        #print('Ordered By Alpha Desc')
+        #------------------------------------------------------------------
+        #print(self.remaining_df.count(), ' Rows remaining')
+        #self.remaining_df.show(self.batch_size, truncate=False)
+
+
 
 
         # RDD stands for Resilient Distributed Dataset, which is a fundamental data structure in Apache Spark.It's a fault-tolerant collection of elements that can be operated on in parallel across a cluster of computers.
         raw_input_array = base_df.select(raw_text_column).rdd.flatMap(lambda x: x).collect()
-
         if os.path.exists(self.output_file_path):
+
+
             self.processed_df = self.spark_session.read.schema(self.final_schema).parquet(f"{self.output_file_path}")
-            print('The parquet df length is: ', self.processed_df.count())
-            #self.processed_df.show()
+            print('The current parquet df length is: ', self.processed_df.count())
+            self.processed_df = self.processed_df.orderBy(desc(col("index")))
+            self.processed_df.show(self.batch_size)
             self.processed_ids = self.processed_df.select(out_text_col).distinct().rdd.flatMap(lambda x: x).collect()
+            if base_df.count() >= self.processed_df.count():
+                self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids)) # ~ is a negation so is not in
+                self.pre_nlp_df = self.pre_nlp_df.filter(~col('comments').isin(self.processed_ids)) # ~ is a negation so is not in
+                self.remaining_df = self.remaining_df.orderBy(col("index").desc())
+                self.pre_nlp_df = self.pre_nlp_df.orderBy(col("index").desc())
+                print(self.remaining_df.count(), ' Rows remaining')
+                self.remaining_df.show(self.batch_size, truncate=False)
+                self.pre_nlp_df.show(self.batch_size, truncate=False)
+                return self.remaining_df, raw_input_array
+            else:
+                self.remaining_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
+                return self.remaining_df, raw_input_array
+
         else:
-            self.processed_df = self.spark_session.createDataFrame([], schema=self.csv_schema)
-
-        #!!!!!
-        pre_nlp_df = self.spark_session.createDataFrame(self.pre_nlp, self.pre_nlp_schema)
-
-        pre_nlp_df.show()
-        base_df = base_df.join(pre_nlp_df, base_df["Comment"] == pre_nlp_df["comments"], how="left")
-        base_df.show()
-        # !!!!!
-
-        self.remaining_df = base_df.filter(~base_df[raw_text_column].isin(self.processed_ids))
-        print(self.remaining_df.count(), ' Rows remaining')
-        self.remaining_df = self.remaining_df.orderBy(asc('comment'), length(col('Comment')).desc())
-        print('Ordered By Alpha Desc')
-        self.remaining_df.show(truncate=False)
-        return self.remaining_df, raw_input_array
+            self.remaining_df = base_df.orderBy(col("index").desc())
+            return base_df, raw_input_array
 
     """
     The choice between using BERT or T5 (like flan-t5-base) largely depends on the specific task and the way the model was fine-tuned or trained. Both BERT and T5 are powerful transformer models but are designed with different architectures and objectives:
@@ -550,26 +707,50 @@ class genDataset:
         # Convert LDA aspects to a JSON string or a formatted string list
         return [json.dumps(aspect) if isinstance(aspect, list) else str(aspect) for aspect in lda_aspects]
 
-    def prep_token_flatten(self, batch_df, raw_batch_array):
-        lda_aspects_formatted = self.pre_nlp['LDA_aspect_prob'].apply(self.convert_lda_aspects)
+    def prep_token_explode(self, batch_df, raw_batch_array):
+        #self.pre_nlp_df = self.pre_nlp_df.withColumn('LDA_aspect_prob', self.convert_lda_aspects(col('LDA_aspect_prob')))
+        print('Pre NLP DF')
+        batch_comments = batch_df.select('Comment').distinct().rdd.flatMap(lambda x: x).collect()
+
+        self.pre_nlp_batch_df = self.pre_nlp_df.filter(col('comments').isin(batch_comments))
+        self.pre_nlp_batch_df.show()
+        print('Pre NLP Size: ', self.pre_nlp_batch_df.count())
+        print('Batch Size: ', batch_df.count())
+
+        input_ids = self.bert_tokens.data['input_ids']
+        token_type_ids = self.bert_tokens.data['token_type_ids']
+        attention_masks = self.bert_tokens.data['attention_mask']
+        spaCy_tokens = self.pre_nlp_batch_df.select('spaCy_tokens').rdd.flatMap(lambda x: x).collect()
+        pos = self.pre_nlp_batch_df.select('POS').rdd.flatMap(lambda x: x).collect()
+        pos_tags = self.pre_nlp_batch_df.select('POS_tags').rdd.flatMap(lambda x: x).collect()
+        entities = self.pre_nlp_batch_df.select('entities').rdd.flatMap(lambda x: x).collect()
+        heads = self.pre_nlp_batch_df.select('heads').rdd.flatMap(lambda x: x).collect()
+        labels = self.pre_nlp_batch_df.select('labels').rdd.flatMap(lambda x: x).collect()
+        dependencies = self.pre_nlp_batch_df.select('dependencies').rdd.flatMap(lambda x: x).collect()
+        negations = self.pre_nlp_batch_df.select('negations').rdd.flatMap(lambda x: x).collect()
+        lda_aspects = self.pre_nlp_batch_df.select('LDA_aspect_prob').rdd.flatMap(lambda x: x).collect()
+        lda_aspects_formatted = self.convert_lda_aspects(lda_aspects)
+
 
         zip_data = [
-            (input_ids, token_type_ids, attention_mask, raw_input)
-            for input_ids, token_type_ids, attention_mask, raw_input in
-            zip(
-                self.bert_tokens.data['input_ids'],
-                self.bert_tokens.data['token_type_ids'],
-                self.bert_tokens.data['attention_mask'],
-                #self.pre_nlp['tokens'],
-                #self.pre_nlp['POS'],
-                #self.pre_nlp['POS_tags'],
-                #self.pre_nlp['entities'],
-                #self.pre_nlp['heads'],
-                #self.pre_nlp['labels'],
-                #self.pre_nlp['dependencies'],
-                #self.pre_nlp['negations'],
-                #self.pre_nlp['LDA_aspects'],
-                #lda_aspects_formatted,
+            (
+                input_id, token_type_id, attention_mask, spaCy_token, pos_val, pos_tag, entity, head, label, dependency, negation, lda_aspect, raw_input
+            )
+            for
+            input_id, token_type_id, attention_mask, spaCy_token, pos_val, pos_tag, entity, head, label, dependency, negation, lda_aspect, raw_input
+            in zip(
+                input_ids,
+                token_type_ids,
+                attention_masks,
+                spaCy_tokens,
+                pos,
+                pos_tags,
+                entities,
+                heads,
+                labels,
+                dependencies,
+                negations,
+                lda_aspects_formatted,
                 raw_batch_array
             )
         ]
@@ -578,60 +759,140 @@ class genDataset:
             StructField('input_ids', ArrayType(IntegerType()), nullable=False),
             StructField('token_type_ids', ArrayType(IntegerType()), nullable=False),
             StructField('attention_mask', ArrayType(IntegerType()), nullable=False),
-            #StructField('spaCy_tokens', ArrayType(StringType()), nullable=False),
-            #StructField('POS', ArrayType(StringType()), nullable=False),
-            #StructField('POS_tags', ArrayType(StringType()), nullable=False),
-            #StructField('entities', ArrayType(StringType()), nullable=True),
-            #StructField('heads', ArrayType(StringType()), nullable=False),
-            #StructField('labels', ArrayType(StringType()), nullable=True),
-            #StructField('dependencies', ArrayType(StringType()), nullable=False),
-            #StructField('negations', ArrayType(StringType()), nullable=True),# Define this explicitly, even if empty
-            #StructField('LDA_aspect_prob', ArrayType(StringType()), nullable=False),
+            StructField('spaCy_tokens', ArrayType(StringType()), nullable=False),
+            StructField('POS', ArrayType(StringType()), nullable=False),
+            StructField('POS_tags', ArrayType(StringType()), nullable=False),
+            StructField('entities', ArrayType(StringType()), nullable=True),
+            StructField('heads', ArrayType(StringType()), nullable=False),
+            StructField('labels', ArrayType(StringType()), nullable=True),
+            StructField('dependencies', ArrayType(StringType()), nullable=False),
+            StructField('negations', ArrayType(StringType()), nullable=True),
+            StructField('LDA_aspect_prob', StringType(), nullable=False),
             StructField(self.raw_text_col, StringType(), nullable=True),
         ])
 
         token_nest_df = self.spark_session.createDataFrame(zip_data, schema)
-        #token_nest_df = self.spark_session.createDataFrame(zip_data, ['input_ids', 'token_type_ids', 'attention_mask', 'spaCy_tokens', 'POS_tags', 'dependencies', 'negations', self.raw_text_col])
 
         print('Token Nest DF')
-        token_nest_df.show(n=5, truncate=False)
+        token_nest_df.show(n=self.batch_size, truncate=False)
         print('Orig Batch')
-        batch_df.show(n=5, truncate=False)
-        batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left")  #.orderBy('index')
-
+        batch_df.show(n=self.batch_size, truncate=False)
+        batch_df = batch_df.join(token_nest_df, self.raw_text_col, "left").orderBy(desc(col("index")))
         print('Joined Batch')
         batch_df.show()
         return batch_df
 
+
     #  PySpark doesn't handle lists of lists automatically without a clear schema.
-    def flatten_df(self, df, uuid, uuid_col_name, nests, flat_col_name, type):
+    @rest_after_run(sleep_seconds=4)
+    def explode_df_v2(self, df, uuid, uuid_col_name, nests, exploded_col_name, type):
+        if type == dict:
+            prep_col = []
+            reasoning_col = []
+            for x in nests:
+                if isinstance(x.aspectTerm, list):
+                    prep_col.append(x.aspectTerm)
+                    prep = []
+                    for y in range(len(x.aspectTerm)):
+                        try:
+                            prep.append(x.reasoning_steps[y].explanation)
+                        except:
+                            print()
+                    reasoning_col.append(prep)
+                else:
+                    prep_col.append([x.aspectTerm])
+                    reasoning_col.append([x.reasoning_steps[0].explanation])
+
+            zip_data = [(id, nest, reason) for id, nest, reason in zip(uuid, prep_col, reasoning_col)]
+
+            explode_schema = StructType([
+                StructField(uuid_col_name, StringType(), True),
+                StructField(exploded_col_name, StringType(), True),
+                StructField('reasoning', StringType(), True)
+            ])
+
+            nests = self.spark_session.createDataFrame(zip_data, [uuid_col_name, exploded_col_name, 'reasoning'], schema=explode_schema)
+
+        unioned_df = df.join(nests, uuid_col_name, "left")
+        # Use arrays_zip to combine 'aspectTerm' and 'reasoning'
+        unioned_df = unioned_df.withColumn('zipped_col', arrays_zip(exploded_col_name, 'reasoning'))
+        print('Joined Batch + Aspects')
+        unioned_df.show()
+        flat_df = unioned_df.withColumn('zipped_col', explode('zipped_col'))
+        flat_df = flat_df.withColumn('aspectTerm', col('zipped_col.aspectTerm'))
+        flat_df = flat_df.withColumn('reasoning', col('zipped_col.reasoning'))
+        flat_df = flat_df.drop('zipped_col')
+        flat_df = flat_df.orderBy(desc(col("index")))
+        print('Exploded DF')
+        flat_df.show()
+        flat_list = flat_df.select(exploded_col_name).rdd.flatMap(lambda x: x).collect()
+        assert flat_df.count() == len(flat_list)
+        return flat_list, flat_df
+
+    @rest_after_run(sleep_seconds=4)
+    def explode_df(self, df, uuid, uuid_col_name, nests, exploded_col_name, type):
         if type == dict:
             prep_col = []
             for x in nests:
                 if isinstance(x, dict):
-                    if isinstance(x[flat_col_name], list):
-                        prep_col.append(x[flat_col_name])
+                    if isinstance(x[exploded_col_name], list):
+                        prep_col.append(x[exploded_col_name])
                     else:
-                        prep_col.append([x[flat_col_name]])
+                        prep_col.append([x[exploded_col_name]])
             zip_data = [(id, nest) for id, nest in zip(uuid, prep_col)]
-            nests = self.spark_session.createDataFrame(zip_data, [uuid_col_name, flat_col_name])
+            nests = self.spark_session.createDataFrame(zip_data, [uuid_col_name, exploded_col_name])
         elif type == list:
             schema = StructType([
                 StructField(uuid_col_name, StringType(), False),
-                StructField(flat_col_name, ArrayType(ArrayType(IntegerType())), True)
+                StructField(exploded_col_name, ArrayType(ArrayType(IntegerType())), True)
             ])
             zip_data = [(id, nest) for id, nest in zip(uuid, nests)]
             nests = self.spark_session.createDataFrame(zip_data, schema=schema)
 
         unioned_df = df.join(nests, uuid_col_name, "left")
+        print('Joined Batch + Aspects')
         unioned_df.show()
-        flat_df = unioned_df.withColumn(flat_col_name, explode(unioned_df[flat_col_name]))  #.orderBy('Index')
+        flat_df = unioned_df.withColumn(exploded_col_name, explode(unioned_df[exploded_col_name])).orderBy(desc(col("index")))
+        print('Exploded DF')
         flat_df.show()
-        flat_list = flat_df.select(flat_col_name).rdd.flatMap(lambda x: x).collect()
+        flat_list = flat_df.select(exploded_col_name).rdd.flatMap(lambda x: x).collect()
         assert flat_df.count() == len(flat_list)
         return flat_list, flat_df
 
-    @json_error_handler(max_retries=5, delay_seconds=2, spec='Base GPT Prompt')
+    @json_error_handler(max_retries=3, delay_seconds=2, spec='Base GPT Prompt')
+    @rest_after_run(sleep_seconds=2)
+    def prompt_local_llm(self, role, prompt, max_tokens):
+
+        try:
+            input_ids = self.local_tokenizer(prompt, return_tensors="pt").to(self.local_llm_model.device)
+            output = self.local_llm_model.generate(**input_ids, max_new_tokens=max_tokens, do_sample=True)
+            decoded = self.local_tokenizer.decode(output[0], skip_special_tokens=True)
+            # return decoded
+
+            if decoded == None:
+                print()
+            cleaned_response = re.search(r"\[.*\]$", decoded, re.DOTALL)
+            if cleaned_response is None:
+                raise ValueError("Could not extract JSON array from the response. Response: " + decoded)
+            cleaned_response = re.sub(r"(?<!\\)'", '"', cleaned_response.string)
+            response = json.loads(cleaned_response)
+            if response == None:
+                print()
+        except (json.JSONDecodeError, AssertionError) as e:
+            print("Error parsing JSON:", str(e))
+            print("Cleaned Response:", cleaned_response)
+            if response == None:
+                print()
+
+        print(response)
+        assert isinstance(response, list), f"{self.local_llm_model} output is read to list"
+        assert isinstance(response[0], dict), f"{self.local_llm_model} output is read to list"
+
+        return response
+
+
+
+    @json_error_handler(max_retries=3, delay_seconds=2, spec='Base GPT Prompt')
     @rest_after_run(sleep_seconds=2)
     def prompt_gpt(self, role, prompt):
         """
@@ -647,42 +908,61 @@ class genDataset:
         )
         try:
             response = completion.choices[0].message.content
+            if response == None:
+                print()
             cleaned_response = re.search(r"\[.*\]$", response, re.DOTALL)
             if cleaned_response is None:
                 raise ValueError("Could not extract JSON array from the response. Response: " + response)
             cleaned_response = re.sub(r"(?<!\\)'", '"', cleaned_response.string)
             response = json.loads(cleaned_response)
+            if response == None:
+                print()
         except (json.JSONDecodeError, AssertionError) as e:
             print("Error parsing JSON:", str(e))
             print("Cleaned Response:", cleaned_response)  # Debug the problematic content
-            return None
+            if response == None:
+                print()
 
-        #response = json.loads(response)
         print(response)
         assert isinstance(response, list), f"{self.model} output is read to list"
         assert isinstance(response[0], dict), f"{self.model} output is read to list"
-        #!!if response is not None:
+
         return response
 
+    @json_error_handler(max_retries=5, delay_seconds=2, spec='Base GPT Prompt')
+    @rest_after_run(sleep_seconds=2)
+    def prompt_gpt_v2(self, role, prompt, response_format):
+        """
+        !!!!!!!THIS IS PAID!!!!!!!
+        """
+        GPTclient = OpenAI()
+        completion = GPTclient.beta.chat.completions.parse(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": role},
+                {"role": "user", "content": prompt}
+            ],
+            response_format=response_format,
+        )
+        return completion
+
     def generate_aspect_mask(self, sentence_tokens, aspect_tokenized):
-        try:
-            mask = [0] * len(sentence_tokens)
-            aspect_len = len(aspect_tokenized)
-            for i in range(len(sentence_tokens) - aspect_len + 1):
-                if sentence_tokens[i:i + aspect_len] == aspect_tokenized:
-                    for j in range(i, i + aspect_len):
-                        mask[j] = 1
-        except:
-            print()
+        mask = [0] * len(sentence_tokens)
+        aspect_len = len(aspect_tokenized)
+        for i in range(len(sentence_tokens) - aspect_len + 1):
+            if sentence_tokens[i:i + aspect_len] == aspect_tokenized:
+                for j in range(i, i + aspect_len):
+                    mask[j] = 1
         return mask
 
-    def batch_generate_aspect_masks(self, input_ids, index):
+    def batch_generate_aspect_masks(self, index): #input_ids,
         self.aspect_masks = []
         for i, a in enumerate(self.aspects):
             encoded_aspect_token = self.tokenizer.encode(a, add_special_tokens=False)
             local_index = index[i] % self.batch_size
             self.aspect_masks.append(
                 self.generate_aspect_mask(self.bert_tokens.data['input_ids'][local_index], encoded_aspect_token))
+
         return self.aspect_masks
 
     def safe_strtobool(self, value):
@@ -703,6 +983,7 @@ class genDataset:
 
     def nlp_batch_for_aspects(self, batch_input, feature_set):
         matching_features = self.pre_nlp[self.pre_nlp['comments'].isin(batch_input)]
+        matching_features = matching_features.set_index('comments').reindex(batch_input).reset_index()
         pre_nlp_features = matching_features[feature_set]
         pre_nlp_features_list = pre_nlp_features.to_dict(
             orient='records')
@@ -714,9 +995,36 @@ class genDataset:
             formatted_prompt += f"Corresponding NLP features {index}: {features}\n\n"
         return formatted_prompt
 
+    def assert_order_v2(self, aspect_terms, batch_input):
+        for aspects, input in zip(aspect_terms, batch_input):
+            #aspect_value = aspects['aspectTerm']
+            aspect_value = aspects.aspectTerm
+            if (aspect_value != 'NONE'):
+                if isinstance(aspect_value, list):
+                    for a in aspect_value:
+                        if a not in input:
+                            return False
+                else:
+                    if aspect_value not in input:
+                        return False
+        return True
+
+    def assert_order(self, aspect_terms, batch_input):
+        for aspects, input in zip(aspect_terms, batch_input):
+            aspect_value = aspects['aspectTerm']
+            if (aspect_value != 'NONE'):
+                if isinstance(aspect_value, list):
+                    for a in aspect_value:
+                        if a not in input:
+                            return False
+                else:
+                    if aspect_value not in input:
+                        return False
+        return True
+
     @json_error_handler(max_retries=3, delay_seconds=2, spec='Aspects')
     @rest_after_run(sleep_seconds=4)
-    def batch_extract_aspects(self, nlp_batch, feature_set, max_aspects):
+    def batch_extract__aspects(self, nlp_batch, feature_set, max_aspects, batch_input):
         new_context = f'Given these sentences and NLP features "{nlp_batch}", '
         prompt = new_context + f'which words or phrases are the aspect terms?'
         role = (
@@ -727,15 +1035,38 @@ class genDataset:
             "Return the results as a JSON array with proper formatting, where each entry is a JSON object with one key:'aspectTerm'."
             f'IFF the "{max_aspects}" > 1 AND a sentence contains more than one aspect term, list them together as the value for the "aspectTerm"'
             "For example, [{'aspectTerm': 'term0'}, {'aspectTerm': ['term0', 'term1']}, ...].'"
-            "If not significant aspect term is found have the value be 'NONE'. Each aspect object corresponds to the input sentence, indexed accordingly."
+            "If not sficant aspect term is found have the value be 'NONE'. Each aspect object corresponds to the input sentence, indexed accordingly."
+    ''
             "Finally check your output for trailing commas, missing or extra brackets, correct quotation marks, and special characters."
             "Ensure the output contains only this JSON array and no additional text."
         )
         self.aspects = self.prompt_gpt(role, prompt)
-        try:
-            assert len(self.aspects) == self.batch_size
-        except:
-            print()
+        assert len(self.aspects) == self.batch_size
+        assert self.assert_order(self.aspects, batch_input), "Aspect terms do not match the input sentences."
+        return self.aspects
+
+    @json_error_handler(max_retries=3, delay_seconds=2, spec='AspectResponse')
+
+    def batch_extract_aspects_v2(self, nlp_batch, feature_set, max_aspects, batch_input):
+        new_context = f'Given these sentences and NLP features "{nlp_batch}", '
+        prompt = new_context + f'which words or phrases are the aspect terms? For each aspect term, provide reasoning steps explaining how it was identified.'
+
+        role = (
+            f'You are a system that identifies the core word(s) or phrase(s) in a list of sentences, which represent the aspect or target term(s). '
+            f'The max number of aspect terms to select per sentence is "{max_aspects}". '
+            "When considering each sentence, also assess all of the preprocessed NLP features at the corresponding index. "
+            f'The NLP features you will be looking at are "{feature_set}". '
+            "LDA (Latent Dirichlet Allocation) aspects are the key topics or themes identified within a document, represented as a distribution of words with associated probabilities, which indicate how relevant each word is to a particular topic. "
+            "Return the results as a JSON array with proper formatting, where each entry corresponds to an input sentence and is a JSON object with the keys 'aspectTerm' and 'reasoning_steps'. "
+            "Each 'reasoning_steps' is a list of explanations detailing how the aspect terms were identified. "
+            "Remember to process each sentence individually and provide the output in the specified JSON format."
+        )
+
+        completion = self.prompt_gpt_v2(role, prompt, AspectResponse)
+        self.aspects = completion.choices[0].message.parsed.aspects
+
+        assert len(self.aspects) == self.batch_size
+        assert self.assert_order_v2(self.aspects, batch_input), "Aspect terms do not match the input sentences."
         return self.aspects
 
     def nlp_batch_for_implicitness(self, batch_input, feature_set, aspect_terms):
@@ -775,33 +1106,65 @@ class genDataset:
         # new_context = f'Given this list of lists of sentences, spaCy NLP features and corresponding aspect terms "{zipped_data}" of  length: {self.batch_size}, '
         prompt = new_context + f'determine the polarity (positive, negative or neutral) of aspect term and if it is explicitly or implicitly expressed with respect to the whole sentence?'
         role = (
-            "You are operating as a system that, given a list of sentence, spaCy NLP features & aspect terms, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence. "
+            "You are operating as a system that, given a list of sentence, spaCy NLP features & aspect terms, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence by filling a json array with that data for later parsing. "
             "Ensure the output contains only this JSON array and no additional leading or trailing text on the formatted json array. "
             "When considering each sentence also assess all of the nlp spaCy features at the corresponding index. "
             f'The NLP features you will be looking at are the "{feature_set}" if applicable. '
             "In dependency parsing, 'heads' refer to the main words (or roots) of phrases that other words depend on, while 'dependencies' describe the grammatical relationships between these dependent words and their heads, such as subjects, objects, and modifiers. "
-            "Polarity is either positive (0), negative (1) or neutral (2). Then, determine if the expression is implicit or explicit (True or False). "
-            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'. "
-            "Each entry represents an input sentence-feature-aspect set, indexed accordingly. "
+            "Determine if the expression of the sentiment toward the aspect term is positive neutral or negative and that sentiment expression is implicit or explicit. "
+            "# The polarity values to choose from are {0:positive, 1:negative, 2:neutral}. If the expression is implicit, set 'implicitness' to BOOLEAN 'True'; if it is explicit, set 'implicitness' to BOOLEAN 'False'. "
+            "Return the results as a JSON array with proper formatting, where each entry is a JSON object with two keys:'polarity' and 'implicitness'. Each entry represents an input sentence-feature-aspect set, indexed accordingly. "
             "If an aspect is 'NONE', return an object with the polarity calculated as normal but with the 'implicitness' set to 'False'. eg. [{'polarity': 1, 'implicitness': 'False'}, {'polarity': 0, 'implicitness': 'True'}, ...] "
             "Be sure to assess every single aspect term and that the length of your output is EXACTLY THE SAME as the length as the INPUT. "
-            "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters. Do not add the word 'json' before you give the output "
+            "Be sure to check for Trailing Commas, Missing/Extra Brackets, Correct Quotation Marks, Special Characters. Do not add the word 'json' before you give the output!"
             #"Ensure the output contains only this JSON array and no additional leading or trailing text on the formatted json array."
         )
         self.polarity_implicitness = self.prompt_gpt(role, prompt)
+
         try:
-            assert len(self.polarity_implicitness) == len(self.aspects)
-        except:
-            print()
+            if self.polarity_implicitness is None or self.aspects is None:
+                raise TypeError("One or both of the lists are NoneType and cannot be compared.")
+
+            assert len(self.polarity_implicitness) == len(self.aspects), \
+                f"Length mismatch: polarity_implicitness ({len(self.polarity_implicitness)}) vs aspects ({len(self.aspects)})"
+
+            implicitness = [self.safe_strtobool(i['implicitness']) for i in self.polarity_implicitness]
+        except (json.JSONDecodeError, AssertionError, TypeError, ValueError) as e:
+            print("Error occurred:", str(e))
         return self.polarity_implicitness
+
+    @json_error_handler(max_retries=3, delay_seconds=2, spec='Polarity & Implicits')
+    @rest_after_run(sleep_seconds=4)
+    def batch_extract_polarity_implicitness_v2(self, nlp_batch, feature_set):
+        new_context = f'Given these sentences, NLP features and key aspect terms "{nlp_batch}", with input length: {len(self.aspects)}, '
+        prompt = new_context + f'determine the polarity (positive, negative or neutral) of aspect term and if it is explicitly or implicitly expressed with respect to the whole sentence?'
+        role = (
+            "You are operating as a system that, given a list of sentence, spaCy NLP features & aspect terms, you will analyze then identify the sentiment & polarity of the aspect term within the context of the given sentence by filling a json array with that data for later parsing. "
+            "Ensure the output contains only this JSON array and no additional leading or trailing text on the formatted json array. "
+            "When considering each sentence also assess all of the nlp spaCy features at the corresponding index. "
+            f'The NLP features you will be looking at are the "{feature_set}" if applicable. '
+            "In dependency parsing, 'heads' refer to the main words (or roots) of phrases that other words depend on, while 'dependencies' describe the grammatical relationships between these dependent words and their heads, such as subjects, objects, and modifiers. "
+            "Determine if the expression of the sentiment toward the aspect term is positive neutral or negative and that sentiment expression is implicit or explicit. "
+            "Each 'reasoning_steps' is a list of explanations detailing how the implicitness boolean is decided and how the polarity label was assigned. "
+        )
+        completion = self.prompt_gpt_v2(role, prompt, ImplicitnessPolarityResponse)
+        self.implicitness = completion.choices[0].message.parsed.implicitness
+        self.polarity = completion.choices[0].message.parsed.polarity
+
+
+        try:
+            assert len(self.polarity) == len(self.aspects), \
+                f"Length mismatch: polarity_implicitness ({len(self.polarity)}) vs aspects ({len(self.aspects)})"
+            assert len(self.implicitness) == len(self.aspects), \
+                f"Length mismatch: polarity_implicitness ({len(self.implicitness)}) vs aspects ({len(self.aspects)})"
+        except (json.JSONDecodeError, AssertionError, TypeError, ValueError) as e:
+            print("Error occurred:", str(e))
+        return self.implicitness, self.polarity
 
     def transform_df(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask,
                      polarity_implicitness):
         # aspect_terms = [i['aspectTerm'] for i in aspect]
-        try:
-            implicitness = [self.safe_strtobool(i['implicitness']) for i in polarity_implicitness]
-        except:
-            print()
+        implicitness = [self.safe_strtobool(i['implicitness']) for i in polarity_implicitness]
         polarity = [i['polarity'] for i in polarity_implicitness]
 
         rows = [
@@ -813,24 +1176,131 @@ class genDataset:
                 attention_mask=attention_masks[i],
                 implicitness=implicitness[i],
                 polarity=polarity[i],
-                raw_text=raw_text[i]
+                raw_text=raw_text[i],
+                index=self.index[i]
             )
             for i in range(len(aspect_terms))
         ]
-        # try:
         final_train_df = self.spark_session.createDataFrame(rows, self.isa_schema)
-        # except:
-        #     print()
 
-        full_final_df = final_train_df.alias('a').join(
-            self.base_df.alias('b'),
-            col('a.' + self.out_text_col) == col('b.' + self.raw_text_col),
+        final_train_df_columns = final_train_df.columns
+        base_df_columns = self.base_df.columns
+        batch_df_columns = self.batch_df.columns
+#
+
+        print('batch_df')
+        self.batch_df.show()
+        self.batch_df.cache()
+        print('final_train_df')
+        final_train_df.show()
+        final_train_df.cache()
+
+        #token_ids == input_ids
+        full_final_df = self.batch_df.alias('a').join(
+            final_train_df.alias('b'),
+            (col('a.' + self.raw_text_col) == col('b.' + self.out_text_col)) &
+            (col('a.' + 'index') == col('b.' + 'index')) &
+            (col('a.' + 'aspectTerm') == col('b.' + 'aspectTerm')),
             "left"
-        ).select('b.*', 'a.*')
+        ).select('a.*', 'b.aspect_mask', 'b.implicitness', 'b.polarity', 'b.token_ids', 'b.raw_text')
 
+        #full_final_df = full_final_df.alias('c').join(
+        #    self.base_df.alias('d'),
+        #    (col('c.' + self.raw_text_col) == col('d.' + self.raw_text_col)) &
+        #    (col('c.' + 'index') == col('d.' + 'index')),
+        #    "left"
+        #).select('c.*', 'd.mutual_information_score', 'd.surprisal', 'd.perplexity',
+        #         'd.contextual_mutual_information_score', 'd.contextual_surprisal', 'd.contextual_perplexity')
+
+        full_final_df = full_final_df.orderBy(col("a.index").desc())
+        print('Final batch DF')
         full_final_df.show()
+        #full_final_df.printSchema()
         return full_final_df
 
+    def consolidate_reasoning(self, reasoning_list):
+        updated_reasonings = []
+        for i, (original_reasoning, AspectTerm, comment) in enumerate(reasoning_list):
+            try:
+                new_reasoning = (original_reasoning + ' ' +
+                                 self.implicitness[i].reasoning_steps[0].explanation + ' ' +
+                                 self.polarity[i].reasoning_steps[0].explanation)
+            except:
+                new_reasoning = original_reasoning
+            updated_reasonings.append((AspectTerm, comment, new_reasoning))
+
+        updated_reasoning_df = self.spark_session.createDataFrame(
+            updated_reasonings, ['aspectTerm', 'Comment', 'reasoning']
+        )
+        return updated_reasoning_df
+
+
+    def transform_df_v2(self, raw_text, token_ids, token_type_ids, attention_masks, aspect_terms, aspect_mask,
+                     polarity_batch, implicitness_batch):
+        # aspect_terms = [i['aspectTerm'] for i in aspect]
+        polarity = [i.polarity for i in polarity_batch]
+        implicitness = [i.implicitness for i in implicitness_batch]
+
+        rows = [
+            Row(
+                aspect=aspect_terms[i],
+                aspect_mask=aspect_mask[i],
+                token_ids=token_ids[i],
+                token_type_ids=token_type_ids[i],
+                attention_mask=attention_masks[i],
+                implicitness=implicitness[i],
+                polarity=polarity[i],
+                raw_text=raw_text[i],
+                index=self.index[i]
+            )
+            for i in range(len(aspect_terms))
+        ]
+        final_train_df = self.spark_session.createDataFrame(rows, self.isa_schema)
+
+        final_train_df_columns = final_train_df.columns
+        base_df_columns = self.base_df.columns
+        batch_df_columns = self.batch_df.columns
+        #
+
+        print('batch_df')
+        self.batch_df.show()
+        self.batch_df.cache()
+        print('final_train_df')
+        final_train_df.show()
+        final_train_df.cache()
+
+        # token_ids == input_ids
+        full_final_df = self.batch_df.alias('a').join(
+            final_train_df.alias('b'),
+            (col('a.' + self.raw_text_col) == col('b.' + self.out_text_col)) &
+            (col('a.' + 'index') == col('b.' + 'index')) &
+            (col('a.' + 'aspectTerm') == col('b.' + 'aspectTerm')),
+            "left"
+        ).select('a.*', 'b.aspect_mask', 'b.implicitness', 'b.polarity', 'b.token_ids', 'b.raw_text')
+        full_final_df.show()
+
+        full_final_df = full_final_df.orderBy(col("a.index").desc())
+        reasoning = full_final_df.select('reasoning', 'aspectTerm', 'Comment').rdd.map(
+            lambda row: (row['reasoning'], row['aspectTerm'], row['Comment'])).collect()
+        updated_reasoning_df = self.consolidate_reasoning(reasoning)
+
+        full_final_df = full_final_df.alias('original').join(
+            updated_reasoning_df.alias('updated'),
+            on=['aspectTerm', self.raw_text_col],
+            how='left'
+        ).select(
+            col('original.*'),
+            col('updated.reasoning').alias('new_reasoning')
+        )
+
+        full_final_df = full_final_df.drop('reasoning').withColumnRenamed('new_reasoning', 'reasoning')
+
+        print('Final batch DF')
+        full_final_df.show(truncate=False)
+        #full_final_df.printSchema()
+        return full_final_df
+
+    @rest_after_run(sleep_seconds=8)
     def write_parquet_file(self, result_df, parquet_path):
         print('Writing df to Parquet file. See data below.')
         result_df.show()
@@ -844,7 +1314,7 @@ class genDataset:
         result_df.printSchema()
         try:
             train_df = result_df.select(col('raw_text').alias('raw_texts'),
-                                        col('aspect').alias('raw_aspect_terms'),
+                                        col('aspectTerm').alias('raw_aspect_terms'),
                                         col('token_ids').alias('bert_tokens'),
                                         col('aspect_mask').alias('aspect_masks'),
                                         col('implicitness').alias('implicits'),
@@ -877,20 +1347,32 @@ class genDataset:
         # remaining_df = self.input_df
         while self.remaining_df.count() > 0:
             self.batch_df = self.remaining_df.limit(self.batch_size)
-
+            #!!!!SET REMAINING DF TO BE SAVED AS A PARQUET UNTIL ITS DONE THEN DELETE IT SO SCORES DONT HAVE TO CONSTANTLY BE RECALCULATED?
             # ------------------------------------------
-            raw_batch_array = self.batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
+            print('Batch DF')
+            self.batch_df.show(self.batch_size)
+            raw_batch_array = self.batch_df.orderBy(col("index").desc()).select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
+            batch_index = self.batch_df.orderBy(col("index").desc()).select("index").rdd.flatMap(lambda x: x).collect()
+
             self.extract_text_tokens(raw_batch_array)
             nlp_feature_set = ['spaCy_tokens', 'POS', 'entities', 'labels', 'negations', 'LDA_aspect_prob']
             batch_nlp = self.nlp_batch_for_aspects(raw_batch_array, nlp_feature_set)
-            self.batch_extract_aspects(batch_nlp, nlp_feature_set, 2)
-            self.batch_df = self.prep_token_flatten(self.batch_df, raw_batch_array)
+            #self.batch_extract_aspects(batch_nlp, nlp_feature_set, 2, raw_batch_array)
+            self.batch_extract_aspects_v2(batch_nlp, nlp_feature_set, 2, raw_batch_array)
+
+            self.batch_df = self.prep_token_explode(self.batch_df, raw_batch_array)
 
             # Bootle Neck
-            self.aspects, self.batch_df = self.flatten_df(self.batch_df, raw_batch_array, self.raw_text_col,
+            #self.aspects, self.batch_df = self.explode_df(self.batch_df, raw_batch_array, self.raw_text_col,
+            #                                              self.aspects, 'aspectTerm', dict)
+            self.aspects, self.batch_df = self.explode_df_v2(self.batch_df, raw_batch_array, self.raw_text_col,
                                                           self.aspects, 'aspectTerm', dict)
+
+            self.batch_df.cache() #To avoid lazy evaluation isses that cause a mismatch you cache to force execution
+            print('The exploded batch df is now of size:', self.batch_df.count())
             # / Bootle Neck
 
+            # SpaCy Values
             self.index = self.batch_df.select('index').rdd.flatMap(lambda x: x).collect()
             raw_text = self.batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             input_ids = self.batch_df.select("input_ids").rdd.flatMap(lambda x: x).collect()
@@ -902,24 +1384,31 @@ class genDataset:
             heads = self.batch_df.select("heads").rdd.flatMap(lambda x: x).collect()
             dependencies = self.batch_df.select("dependencies").rdd.flatMap(lambda x: x).collect()
             negations = self.batch_df.select("negations").rdd.flatMap(lambda x: x).collect()
-            batch_spaCy_features = [spaCy_tokens, POS, POS_tags, heads, dependencies, negations]
 
-            self.batch_generate_aspect_masks(input_ids, self.index)
+            self.batch_generate_aspect_masks(self.index)
             batch_features_2 = ['spaCy_tokens', 'POS', 'POS_tags', 'heads', 'dependencies', 'negations']
+            batch_spaCy_features = [spaCy_tokens, POS, POS_tags, heads, dependencies, negations]
             batch_nlp = self.nlp_batch_for_implicitness(raw_text, batch_spaCy_features, self.aspects)
-            self.batch_extract_polarity_implicitness(batch_nlp, batch_features_2)
-            self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask,
-                                                        self.aspects, self.aspect_masks, self.polarity_implicitness)
+            #self.batch_extract_polarity_implicitness(batch_nlp, batch_features_2)
+            self.implicitness, self.polarity = self.batch_extract_polarity_implicitness_v2(batch_nlp, batch_features_2)
+            #self.processed_batch_df = self.transform_df(raw_text, input_ids, token_type_ids, attention_mask,
+            #                                            self.aspects, self.aspect_masks, self.polarity_implicitness)
+
+            self.processed_batch_df = self.transform_df_v2(raw_text, input_ids, token_type_ids, attention_mask,
+                                                        self.aspects, self.aspect_masks, self.polarity, self.implicitness)
             # ------------------------------------------
 
             self.write_parquet_file(self.processed_batch_df, self.output_file_path)
             self.processed_ids = self.processed_batch_df.select(self.raw_text_col).rdd.flatMap(lambda x: x).collect()
             self.remaining_df = self.remaining_df.filter(~self.remaining_df[self.raw_text_col].isin(self.processed_ids))
+            print('remaining df')
+
             self.remaining_df.show()
-        try:
+            print('batch finished')
+        if not os.path.exists(self.output_pkl_path):
             self.write_pkl_file(self.output_pkl_path)
             print('Run Complete.')
-        except:
+        else:
             print('All data already processed. Terminating.')
 
 
@@ -955,4 +1444,3 @@ if __name__ == '__main__':
     gen = genDataset(args=args, pre_nlp=nlp_feature_df)
 
     gen.run()
-    #gen.write_pkl_file(out_pkl_path)
