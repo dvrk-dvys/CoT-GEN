@@ -269,8 +269,8 @@ class ThorTrainer:
         return loss_weights
 
     def prepare_step_zero(self, **kwargs):
-        inferred_target_prompt_ids, inferred_target_prompt_masks, target_ids, target_masks, context_A_ids, context_A_masks, inferred_implicitness_prompt_ids, inferred_implicitness_prompt_masks, implicits = [kwargs[w] for w in
-        'inferred_target_ids, inferred_target_masks, target_ids, target_masks, context_A_ids, context_A_masks, inferred_implicitness_prompt_ids, inferred_implicitness_prompt_masks, implicits'.strip().split(', ')]
+        inferred_target_ids, inferred_target_masks, target_ids, target_masks, context_A_ids, context_A_masks, inferred_implicitness_ids, inferred_implicitness_masks, implicits = [kwargs[w] for w in
+        'inferred_target_ids, inferred_target_masks, target_ids, target_masks, context_A_ids, context_A_masks, inferred_implicitness_ids, inferred_implicitness_masks, implicits'.strip().split(', ')]
 
         # Infer Target
         #prompts = [self.model.tokenizer.decode(ids) for ids in inferred_target_prompt_ids]
@@ -282,8 +282,8 @@ class ThorTrainer:
         #print(labeled_targets[0])# 'support'
 
         target_res = {
-            'input_ids': inferred_target_prompt_ids, # Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.",  Detect if implict speech is being used to express an opinion about a target in the sentence Consider - Contextual Dependence: For example, the phrase "Try the tandoori salmon!" lacks explicit sentiment words, but the recommendation implies a positive sentiment based on cultural understanding and context. - Absence of Direct Opinion Expression: For example, "The new mobile phone can just fit in my pocket" implies a positive sentiment about the phones portability without using explicit positive adjectives. - Irony or Sarcasm: For example, saying "What a wonderful day!" in the middle of a storm conveys a negative sentiment through irony. - Dependence on Pragmatic Theories: For instance, a polite statement like "Its not the best service Ive experienced" might imply dissatisfaction, though it appears mild or neutral on the surface. - Multi-Hop Reasoning: For instance, the statement "The book was on the top shelf" might require reasoning about the inconvenience of reaching it to infer a negative sentiment. Return a "True" or "False" boolean if implicit speech is being used regardless of its polarity.
-            'input_masks': inferred_target_prompt_masks,
+            'input_ids': inferred_target_ids, # Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.",  Detect if implict speech is being used to express an opinion about a target in the sentence Consider - Contextual Dependence: For example, the phrase "Try the tandoori salmon!" lacks explicit sentiment words, but the recommendation implies a positive sentiment based on cultural understanding and context. - Absence of Direct Opinion Expression: For example, "The new mobile phone can just fit in my pocket" implies a positive sentiment about the phones portability without using explicit positive adjectives. - Irony or Sarcasm: For example, saying "What a wonderful day!" in the middle of a storm conveys a negative sentiment through irony. - Dependence on Pragmatic Theories: For instance, a polite statement like "Its not the best service Ive experienced" might imply dissatisfaction, though it appears mild or neutral on the surface. - Multi-Hop Reasoning: For instance, the statement "The book was on the top shelf" might require reasoning about the inconvenience of reaching it to infer a negative sentiment. Return a "True" or "False" boolean if implicit speech is being used regardless of its polarity.
+            'attention_mask': inferred_target_masks,
             'output_ids': target_ids, # ['system', 'gray color', 'webcam', 'Windows XP SP2', 'service', 'Games', 'gaming', 'support', 'software', 'screen']
             'output_masks': target_masks,
         }
@@ -306,8 +306,8 @@ class ThorTrainer:
         batch_implicit_labels = batch_implicit_labels.data
 
         implicitness_res = {
-            'input_ids': inferred_implicitness_prompt_ids,# Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.",  Detect if implict speech is being used to express an opinion about a target in the sentence Consider - Contextual Dependence: For example, the phrase "Try the tandoori salmon!" lacks explicit sentiment words, but the recommendation implies a positive sentiment based on cultural understanding and context. - Absence of Direct Opinion Expression: For example, "The new mobile phone can just fit in my pocket" implies a positive sentiment about the phones portability without using explicit positive adjectives. - Irony or Sarcasm: For example, saying "What a wonderful day!" in the middle of a storm conveys a negative sentiment through irony. - Dependence on Pragmatic Theories: For instance, a polite statement like "Its not the best service Ive experienced" might imply dissatisfaction, though it appears mild or neutral on the surface. - Multi-Hop Reasoning: For instance, the statement "The book was on the top shelf" might require reasoning about the inconvenience of reaching it to infer a negative sentiment. Return a "True" or "False" boolean if implicit speech is being used regardless of its polarity.
-            'input_masks': inferred_implicitness_prompt_masks,
+            'input_ids': inferred_implicitness_ids,# Given the sentence "the system it comes with does not work properly, so when trying to fix the problems with it it started not working at all.",  Detect if implict speech is being used to express an opinion about a target in the sentence Consider - Contextual Dependence: For example, the phrase "Try the tandoori salmon!" lacks explicit sentiment words, but the recommendation implies a positive sentiment based on cultural understanding and context. - Absence of Direct Opinion Expression: For example, "The new mobile phone can just fit in my pocket" implies a positive sentiment about the phones portability without using explicit positive adjectives. - Irony or Sarcasm: For example, saying "What a wonderful day!" in the middle of a storm conveys a negative sentiment through irony. - Dependence on Pragmatic Theories: For instance, a polite statement like "Its not the best service Ive experienced" might imply dissatisfaction, though it appears mild or neutral on the surface. - Multi-Hop Reasoning: For instance, the statement "The book was on the top shelf" might require reasoning about the inconvenience of reaching it to infer a negative sentiment. Return a "True" or "False" boolean if implicit speech is being used regardless of its polarity.
+            'attention_mask': inferred_implicitness_masks,
             'output_ids': batch_implicit_labels['input_ids'],# ['False', 'False', 'False', 'False', 'False', 'False', 'False', 'False', 'True', 'False']
             'output_masks': batch_implicit_labels['attention_mask'],
         }
@@ -317,22 +317,11 @@ class ThorTrainer:
         return target_res, approx_embeddings, target_embeddings, implicitness_res #, approx_vector_weights
 
     def prepare_step_one(self, **kwargs):
-        #'aspect_ids': batch_input['input_ids'],
-        #'aspect_masks': batch_input['attention_mask'],
-        #'context_A_ids': batch_contexts_A['input_ids'],
-
-        aspect_ids, aspect_masks, context_A_ids = [kwargs[w] for w in 'input_ids, input_masks, context_A_ids'.strip().split(', ')]
-        #aspect
-        #targets = [self.model.tokenizer.decode(ids) for ids in aspect_ids]
-        #targets = [context.replace('<pad>', '').replace('</s>', '').strip() for context in targets]
-        #print(targets[0])
-        #contexts_A = [self.model.tokenizer.decode(ids) for ids in context_A_ids]
-        #contexts_A = [context.replace('<pad>', '').replace('</s>', '').strip() for context in contexts_A]
-        #print(contexts_A[0])
+        aspect_ids, aspect_masks, context_A_ids = [kwargs[w] for w in 'aspect_ids, aspect_masks, context_A_ids'.strip().split(', ')]
 
         res = {
             'input_ids': aspect_ids,
-            'input_masks': aspect_masks,
+            'attention_mask': aspect_masks,
         }
 
         res = {k: v.to(self.config.device) for k, v in res.items()}
@@ -364,7 +353,7 @@ class ThorTrainer:
 
         res = {
             'input_ids': batch_inputs['input_ids'],
-            'input_masks': batch_inputs['attention_mask'],
+            'attention_mask': batch_inputs['attention_mask'],
             'context_B_ids': batch_contexts_B['input_ids'],
             'target_ids': target_ids,
         }
@@ -395,7 +384,7 @@ class ThorTrainer:
 
         res = {
             'input_ids': batch_inputs['input_ids'],
-            'input_masks': batch_inputs['attention_mask'],
+            'attention_mask': batch_inputs['attention_mask'],
             'context_C_ids': batch_contexts_C['input_ids'],
         }
         res = {k: v.to(self.config.device) for k, v in res.items()}
@@ -421,7 +410,7 @@ class ThorTrainer:
 
         res = {
             'input_ids': batch_inputs['input_ids'],
-            'input_masks': batch_inputs['attention_mask'],
+            'attention_mask': batch_inputs['attention_mask'],
             'output_ids': output_ids,
             'output_masks': output_masks,
         }
